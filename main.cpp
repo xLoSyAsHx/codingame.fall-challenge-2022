@@ -20,7 +20,7 @@
 int g_mapWidth = 0, g_mapHeight = 0;
 
 struct Pos {
-    int x = 0, y = 0;
+    int x = -1, y = -1;
     bool isValid = false;
 
     Pos operator+(const Pos& p) { return Pos{x + p.x, y + p.y}; }
@@ -32,20 +32,26 @@ struct Pos {
 
     // Some approximation
     int distanceTo(Pos p) { return abs(x - p.x) + abs(y - p.y); }
+
+    void invalidate() { x = y = -1; isValid = false; };
 };
 
-#define DBG_MSG_V(v) { std::cerr << "MESSAGE: "#v" = " << v << std::endl; }
-#define DBG_MSG2_V(v1, v2) { std::cerr << "MESSAGE: v1 = " << v1 << "; v2 = " << v2 << std::endl; }
-#define DBG_MSG3_V(v1, v2, v3) { std::cerr << "MESSAGE: v1 = " << v1 << "; v2 = " << v2 << "; " << v3 <<  std::endl; }
+#define DBG_MSG_V(msg, v) { std::cerr << msg << " " << v << std::endl; }
+#define DBG_MSG_V2(msg, v1, v2) { std::cerr << msg << " " << v1 << " " << v2 << std::endl; }
 
-#define DBG_MSG_ARR_V(v) { std::cerr << "MESSAGE: "#v" = { "; for (auto& el : v) std::cerr << el << "; "; std::cerr << std::endl; }
-#define DBG_MSG_ARR_OF_PTR_V(v) { std::cerr << "MESSAGE: "#v" = { "; for (auto el : v) std::cerr << *el << "; "; std::cerr << std::endl; }
+#define DBG_V(v) { std::cerr << ""#v" = " << v << std::endl; }
+#define DBG_V2(v1, v2) { std::cerr << "v1 = " << v1 << "; v2 = " << v2 << std::endl; }
+#define DBG_V3(v1, v2, v3) { std::cerr << "v1 = " << v1 << "; v2 = " << v2 << "; " << v3 <<  std::endl; }
 
-#define DBG_MSG_STR(s) { std::cerr << "MESSAGE: " << s << std::endl; }
+#define DBG_MSG_ARR_V(v) { std::cerr << ""#v" = { "; for (auto& el : v) std::cerr << el << "; "; std::cerr << std::endl; }
+#define DBG_MSG_ARR_OF_PTR_V(v) { std::cerr << ""#v" = { "; for (auto el : v) std::cerr << *el << "; "; std::cerr << std::endl; }
 
-#define DBG_MSG_PTR(v) { std::cerr << "MESSAGE: "#v" = " << *v << std::endl; }
+#define DBG_MSG_STR(s) { std::cerr << s << std::endl; }
+
+#define DBG_MSG_PTR(v) { std::cerr << ""#v" = " << *v << std::endl; }
 
 #define DBG_MAP_CELLS(v) { std::cerr << ""#v" = ["; for (auto& el : v) std::cerr << el->p; std::cerr << "]" << std::endl; }
+#define DBG_MAP_POSES(v) { std::cerr << ""#v" = ["; for (auto& el : v) std::cerr << el;    std::cerr << "]" << std::endl; }
 
 struct MapCell {
     Pos p;
@@ -71,9 +77,12 @@ struct MapCell {
         recycleProfit = -1;
     }
 
-    inline bool isMy()      const { return owner ==  1; }
-    inline bool isEnemy()   const { return owner ==  0; }
-    inline bool isNobodys() const { return owner == -1; }
+    inline bool isMy()        const { return owner ==  1; }
+    inline bool isEnemy()     const { return owner ==  0; }
+    inline bool isEnemyUnit() const { return isEnemy() && units > 0; }
+    inline bool isNobodys()   const { return owner == -1; }
+    inline bool hasUnitsRec() const { return units || recycler; }
+
 
     inline bool isValid()   const { return p.isValid && scrap_amount; }
 
@@ -108,10 +117,8 @@ struct MapCell {
     {
         if (recycleProfit == -1)
         {
-            recycleProfit = scrap_amount;
-
             std::vector<MapCell*> n = getCellNeighbours();
-            std::for_each(n.begin(), n.end(), [this](MapCell* c) { recycleProfit += c->scrap_amount; });
+            recycleProfit = std::accumulate(n.begin(), n.end(), scrap_amount, [](int acc, MapCell* rhd) { return acc + rhd->scrap_amount; });
         }
         return recycleProfit;
     }
@@ -211,9 +218,30 @@ struct GameInfo
     {
         if (p.isValid)
             return map[p.y][p.x];
-        
-        printf("ERROR line %d", __LINE__);
+
+        std::cerr << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ERROR GetCell!" << std::endl;
         return map[0][0];
+    }
+
+    bool isValid(Pos p)
+    {
+        if (p.x >= 0 && p.x < g_mapWidth && p.y >= 0 && p.y < g_mapHeight)
+        {
+            return getCell(p).isValid();
+        }
+
+        return false;
+    }
+
+    bool isMyValid(Pos p)
+    {
+        if (p.x >= 0 && p.x < g_mapWidth && p.y >= 0 && p.y < g_mapHeight)
+        {
+            const auto& cell = getCell(p);
+            return cell.isValid() && cell.isMy();
+        }
+
+        return false;
     }
 
     void validate()
@@ -241,26 +269,26 @@ struct GameInfo
         for (auto el : toRemove)
         {
             DBG_MSG_STR("TO DELETE:");
-            DBG_MSG_V(el);
+            DBG_V(el);
             enemyCUnits.erase(std::find(enemyCUnits.begin(), enemyCUnits.end(), el));
         }
 
         // Remove my units if they can't move.
         // TODO: Need to safe this cells to not spawn new units into it
         std::vector<MapCell*> myToRemove = {};
-        for (auto cUnit : myCUnits)
+        for (auto cell : myCells)
         {
-            if (cUnit->getCellNeighbours().empty())
+            if (cell->getCellNeighbours().empty())
             {
-                myToRemove.emplace_back(cUnit);
+                myToRemove.emplace_back(cell);
             }
         }
         
         for (auto el : myToRemove)
         {
             DBG_MSG_STR("TO DELETE MY:");
-            DBG_MSG_V(el);
-            myCUnits.erase(std::find(myCUnits.begin(), myCUnits.end(), el));
+            DBG_V(el);
+            myCells.erase(std::find(myCells.begin(), myCells.end(), el));
         }
 
         DBG_MSG_STR("-------- Validation part finished--------");
@@ -273,106 +301,65 @@ std::vector<std::vector<MapCell>>& MapCell::map = GInf.map;
 
 class Command {
     std::stringstream ss;
+    std::stringstream errSS;
     bool bEmpty = true;
 
 public:
     bool empty() const { return bEmpty; }
 
-    void Clear()  { ss.str(""); bEmpty = true; }
-    void Submit() { std::cout << ss.str() << std::endl; }
+    void Clear()  { ss.str(""); errSS.str(""); bEmpty = true; }
+    void Submit() { std::cerr << errSS.str()<< std::endl; std::cout << ss.str() << std::endl; }
 
-    void AddBuildRec(Pos p)                    { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 1; }
-    void AddMove(int amount, Pos from, Pos to) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;}
-    void AddSpawn(int amount, Pos p)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += amount; GInf.my_matter -= amount; }
-    void AddWait()                             { bEmpty = false; ss << "WAIT"; }
+    void AddBuildRec(Pos p)                              { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 10; GInf.getCell(p).recycler = 1; }
+    void AddMove(int amount, Pos from, Pos to, int line) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;
+                                                                        errSS << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " l=" << line << "; ";}
+    void AddSpawn(int amount, Pos p, int line)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
+                                                                        errSS << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << " l=" << line << "; "; }
+    void AddWait()                                       { bEmpty = false; ss << "WAIT"; }
 };
 
 
-ProfitCell findBestRecycler()
+bool willCellTurnToGrass(MapCell* cell)
 {
-    std::array<ProfitCell, 3> res = {};
-
-    auto cmp = [](ProfitCell left, ProfitCell right) { return left.profit > right.profit; }; // Lower priority - first
-    std::priority_queue<ProfitCell, std::vector<ProfitCell>, decltype(cmp)> res_queue(cmp);
-
-    // Find all unique poses where player can build a recycler
-    std::vector<Pos> uniquePoses = {};
-    for (auto cell : GInf.myCells)
+    int currScrapAmount = cell->scrap_amount;
+    for (auto neighbour : cell->getCellNeighbours())
     {
-        if (!cell->units && !cell->recycler)
-            uniquePoses.emplace_back(cell->p);
+        if (neighbour->recycler)
+            --currScrapAmount;
     }
 
-    for (auto cUnit : GInf.myCUnits)
-    {
-        int neighboursNum = cUnit->getCellNeighboursPos().size();
-        DBG_MSG_V(neighboursNum);
-
-        if (neighboursNum == 1)
-        {
-            if (auto it = std::find(uniquePoses.begin(), uniquePoses.end(), cUnit->getCellNeighboursPos()[0]); it != uniquePoses.end())
-                uniquePoses.erase(it);
-        }
-    }
-    // std::sort(uniquePoses.begin(), uniquePoses.end());
-    // auto lastIt = std::unique(uniquePoses.begin(), uniquePoses.end());
-    // uniquePoses.erase(lastIt, uniquePoses.end());
-
-    // Add all unique poses to priority_queue and safe max size == 3
-    std::for_each(uniquePoses.begin(), uniquePoses.end(), [&res_queue](const Pos& p) {
-        auto& cell = GInf.getCell(p);
-        int cellProfit = cell.getRecyclerProfit();
-
-        res_queue.push(ProfitCell{ cellProfit, &cell });
-        if (res_queue.size() > 3)
-            res_queue.pop(); // remove el with the smallest priority
-    });
-
-    if (res_queue.empty())
-        return {};
-
-    return res_queue.top();
+    return currScrapAmount <= 0;
 }
 
-Pos findBestForSpawn()
+bool hasEnemyNeighbours(MapCell* cell)
 {
-    std::vector<Pos> uniquePoses = {};
-    for (auto cell : GInf.myCells)
+    for (auto neighbour : cell->getCellNeighbours())
     {
-        int neighboursNum = cell->getCellNeighbours().size();
-        if (neighboursNum > 3 && !cell->recycler && cell->p != GInf.prev_spawn && cell->units < 3)
-        {
-            DBG_MSG_V(cell->p);
-            GInf.prev_spawn = cell->p;
-            return cell->p;
-        }
+        if (neighbour->isEnemyUnit())
+            return true;
     }
-    return {};
+
+    return false;
 }
 
-Pos findBestForResearchMove(MapCell* myCell)
+int getEnemyNeighboursCount(MapCell* cell)
 {
-    // TODO: Need to try to move away ffrom enemies
-    // Example: if my{ 5, 0 }, nearest_enemy{ 3, 0 }, need to move Right or Bottom
+    // Wave depth == 2
 
-    std::array<Pos, 4> candidates  = {
-        myCell->getLeft(),
-        myCell->getTop(),
-        myCell->getBottom(),
-        myCell->getRight(),
-    };
-
-    for (auto candidatePos : candidates)
+    int numEnemies = 0;
+    for (auto neighbour : cell->getCellNeighbours())
     {
-        if (candidatePos.isValid)
+        if (neighbour->isEnemyUnit())
+            numEnemies += neighbour->units;
+
+        for (auto neighbour2 : neighbour->getCellNeighbours())
         {
-            auto& candidateCell = GInf.getCell(candidatePos);
-            if (candidateCell.isValid() && !candidateCell.isMy() && !candidateCell.recycler)
-                return candidateCell.p;
+            if (neighbour2->p != neighbour->p && neighbour2->isEnemyUnit())
+                numEnemies += neighbour2->units;
         }
     }
 
-    return {};
+    return numEnemies;
 }
 
 // TODO: Do not use this dummy function
@@ -383,7 +370,7 @@ Pos getUnitsEstCenterPos(std::vector<MapCell*>& units)
 
     Pos res {0, 0};
     std::for_each(units.begin(), units.end(), [&res](MapCell* c){ res = res + c->p; });
-    
+
     res.x /= (int)units.size();
     res.y /= (int)units.size();
 
@@ -415,16 +402,128 @@ Pos getMyUnitNearestToEnemyPos()
     return getNearestUnitToPos(GInf.myCUnits, enemyCenterEstPos);
 }
 
-bool willCellTurnToGrass(MapCell* cell)
+ProfitCell findBestRecycler()
 {
-    int currScrapAmount = cell->scrap_amount;
-    for (auto neighbour : cell->getCellNeighbours())
+    // Find all unique poses where player can build a recycler
+    std::vector<Pos> uniquePoses = {};
+    int curMaxScrap = 0;
+    for (auto cell : GInf.myCells)
     {
-        if (neighbour->recycler)
-            --currScrapAmount;
+        if (!cell->hasUnitsRec())
+            uniquePoses.emplace_back(cell->p);
     }
 
-    return currScrapAmount <= 0;
+    for (auto cUnit : GInf.myCUnits)
+    {
+        int neighboursNum = cUnit->getCellNeighboursPos().size();
+
+        if (neighboursNum == 1)
+        {
+            if (auto it = std::find(uniquePoses.begin(), uniquePoses.end(), cUnit->getCellNeighboursPos()[0]); it != uniquePoses.end())
+                uniquePoses.erase(it);
+        }
+    }
+
+    // Sort elements by profit amount
+    std::sort(uniquePoses.begin(), uniquePoses.end(), [](Pos& lhd, Pos& rhd) {
+        return GInf.getCell(lhd).getRecyclerProfit() > GInf.getCell(rhd).getRecyclerProfit();
+    });
+
+    if (uniquePoses.empty())
+        return {};
+
+    auto pCell = &GInf.getCell(uniquePoses.front());
+    return { pCell->getRecyclerProfit(), pCell };
+}
+
+struct SpawnRecomendation
+{
+    Pos p;
+    int units;
+};
+SpawnRecomendation findBestForSpawn()
+{
+    /*
+     * Best for spawn search steps in priority order
+     *
+     * 1) If there are enemies near my units in 2-cells radius - spawn as much as possible to protect (if will not turn to grass)
+     * 2) Find normal cell which will not turn into grass
+     * 3) Find my unit nearest to enemy and spawn here
+    */
+
+   // ----- 1 -----
+    for (auto pBestForSpawnSell : GInf.myCUnits)
+    {
+        if (int numEnemies = getEnemyNeighboursCount(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell))
+        {
+            DBG_V(pBestForSpawnSell->p);
+
+            int toSpawn = numEnemies - pBestForSpawnSell->units;
+            /*
+            if (toSpawn < 0)
+            {
+                toSpawn = 1;
+            }
+            else
+            */
+            {
+                toSpawn = std::min(GInf.my_matter / 10, getEnemyNeighboursCount(pBestForSpawnSell));
+            }
+
+            return { pBestForSpawnSell->p, toSpawn };
+        }
+    }
+
+    // ----- 2 -----
+    if (GInf.myCUnitsNum < 1.3*double(GInf.enemyCUnitsNum))
+    {
+        for (auto pBestForSpawnSell : GInf.myCells)
+        {
+            int neighboursNum = pBestForSpawnSell->getCellNeighbours().size();
+            if (neighboursNum > 3 && !pBestForSpawnSell->can_spawn && pBestForSpawnSell->p != GInf.prev_spawn && !willCellTurnToGrass(pBestForSpawnSell))
+            {
+                DBG_V(pBestForSpawnSell->p);
+                GInf.prev_spawn = pBestForSpawnSell->p;
+                return { pBestForSpawnSell->p, 1 };
+            }
+        }
+    }
+
+    // ----- 3 -----
+    /*
+    Pos p = getMyUnitNearestToEnemyPos();
+    if (p.isValid)
+    {
+        return { p, 1 };
+    }
+    */
+
+    return {};
+}
+
+Pos findBestForResearchMove(MapCell* myCell)
+{
+    // TODO: Need to try to move away ffrom enemies
+    // Example: if my{ 5, 0 }, nearest_enemy{ 3, 0 }, need to move Right or Bottom
+
+    std::array<Pos, 4> candidates  = {
+        myCell->getLeft(),
+        myCell->getTop(),
+        myCell->getBottom(),
+        myCell->getRight(),
+    };
+
+    for (auto candidatePos : candidates)
+    {
+        if (candidatePos.isValid)
+        {
+            auto& candidateCell = GInf.getCell(candidatePos);
+            if (candidateCell.isValid() && !candidateCell.isMy() && !candidateCell.recycler)
+                return candidateCell.p;
+        }
+    }
+
+    return {};
 }
 
 int getMaxToMove(MapCell* cell)
@@ -432,25 +531,115 @@ int getMaxToMove(MapCell* cell)
     // TODO: maybe need to refine
 
     // If algorithm spawn units or moved them - we need to take it into account
-    return std::min(cell->units, GInf.myCUnitsNum - GInf.mySpawnNum - GInf.myMovedNum - 1);
+    return std::min(cell->units, GInf.myCUnitsNum - GInf.mySpawnNum - GInf.myMovedNum);
 }
 
 Pos getNearestNooneCellPosToMove(MapCell* curCell)
 {
     // TODO: use wave-algorithm with depth 5-7
+
+    // Depth 1
     for (auto cell : curCell->getCellNeighbours())
     {
         if (cell->isNobodys() || (cell->isEnemy() && cell->recycler == 0))
             return cell->p;
-        
-        for (auto cell : cell->getCellNeighbours())
+    }
+
+    // Depth 2
+    for (auto cell : curCell->getCellNeighbours())
+    {
+        for (auto cell2 : cell->getCellNeighbours())
         {
-            if (cell->isNobodys())
-                return cell->p;
+            if (cell2->isNobodys() || (cell2->isEnemy() && cell2->recycler == 0))
+                return cell2->p;
         }
     }
 
     return {};
+}
+
+/*
+struct PosRoute {
+    Pos p;
+    std::vector<Pos>
+};
+*/
+struct Poses_DestFirst {
+    Pos pDest;
+    Pos firstToMove;
+};
+Poses_DestFirst getNearest_Enemy_CellPosToMove(MapCell* curCell)
+{
+    Poses_DestFirst res{};
+    // TODO: use wave-algorithm with depth 5-7
+
+    // Depth 1
+    for (auto cell : curCell->getCellNeighbours())
+    {
+        if (cell->isEnemy() && cell->recycler == 0)
+        {
+            res.firstToMove = res.pDest = cell->p;
+            return res;
+        }
+    }
+
+    // Depth 2
+    for (auto cell : curCell->getCellNeighbours())
+    {
+        res.firstToMove = cell->p;
+        for (auto cell2 : cell->getCellNeighbours())
+        {
+            if (cell2->isEnemy() && cell2->recycler == 0)
+            {
+                res.pDest = cell2->p;
+                return res;
+            }
+        }
+    }
+
+    return {};
+}
+Poses_DestFirst getNearest_Noone_CellPosToMove(MapCell* curCell)
+{
+    Poses_DestFirst res{};
+    // TODO: use wave-algorithm with depth 5-7
+
+    // Depth 1
+    for (auto cell : curCell->getCellNeighbours())
+    {
+        if (cell->isNobodys())
+        {
+            res.firstToMove = res.pDest = cell->p;
+            return res;
+        }
+    }
+
+    // Depth 2
+    for (auto cell : curCell->getCellNeighbours())
+    {
+        res.firstToMove = cell->p;
+        for (auto cell2 : cell->getCellNeighbours())
+        {
+            if (cell2->isNobodys())
+            {
+                res.pDest = cell2->p;
+                return res;
+            }
+        }
+    }
+
+    return {};
+}
+
+Poses_DestFirst getNearest_EnemyOrNoone_CellPosToMove(MapCell* curCell)
+{
+    auto res = getNearest_Enemy_CellPosToMove(curCell);
+    if (!res.pDest.isValid)
+    {
+        res = getNearest_Noone_CellPosToMove(curCell);
+    }
+
+    return res;
 }
 
 void getRandomCells(std::vector<MapCell*> &v, std::vector<MapCell*> &out, size_t nelems)
@@ -463,11 +652,9 @@ void getRandomCells(std::vector<MapCell*> &v, std::vector<MapCell*> &out, size_t
 int main()
 {    
     Command command;
-    
-    MapCell* pMyCUnitsG1 = nullptr;
 
-    Pos researcherPos = {};
-    Pos additionalResearcherPos = {};
+    Pos researcherPos{};
+    Pos invaderPos{};
 
     // game loop
     GInf.ReadMapDimention();
@@ -476,23 +663,26 @@ int main()
         GInf.ReadCellsInput();
         command.Clear();
 
-        if (additionalResearcherPos.isValid)
+        if (!GInf.isMyValid(researcherPos)) researcherPos.invalidate();
+        if (!GInf.isMyValid(invaderPos))    invaderPos.invalidate();
+
+        if (researcherPos.isValid && hasEnemyNeighbours(&GInf.getCell(researcherPos)))
         {
-            if (auto& cell = GInf.getCell(additionalResearcherPos); !cell.isMy() || cell.scrap_amount == 0)
-                additionalResearcherPos = {};
+            DBG_MSG_V("WARN - Researcher in dangerous - behave like normal unit", researcherPos);
+            researcherPos.invalidate();
+        }
+
+        // TODO: If invader is important - do not remove it
+        if (invaderPos.isValid && hasEnemyNeighbours(&GInf.getCell(invaderPos)))
+        {
+            DBG_MSG_V("WARN - Invider in dangerous - behave like normal unit", invaderPos);
+            invaderPos.invalidate();
         }
 
         bool is_spawn = false;
 
-        DBG_MSG_V(GInf.currentTurn);
+        DBG_V(GInf.currentTurn);
         DBG_MAP_CELLS(GInf.myCUnits);
-
-        pMyCUnitsG1 = &GInf.getCell(getMyUnitNearestToEnemyPos());
-        DBG_MSG_V(pMyCUnitsG1->p);
-        
-        Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, pMyCUnitsG1->p);
-        DBG_MSG_V(nearestEnemyPos);
-
 
         // If number of units too small - spend all matters to spawn units
         // TODO: Maybe need to spawn near the enemy
@@ -505,7 +695,7 @@ int main()
             {
                 if (cell->can_spawn)
                 {
-                    command.AddSpawn(GInf.my_matter / 10, cell->p);
+                    command.AddSpawn(GInf.my_matter / 10, cell->p, __LINE__);
                     command.Submit();
                     continue;
                 }
@@ -517,6 +707,7 @@ int main()
 
 
         // 
+        DBG_MSG_STR("-------- Recycler part start --------");
         if (GInf.myRecycleNum < 1 && GInf.my_matter >= 10)
         {
             ProfitCell cellForRecycler = findBestRecycler();
@@ -527,7 +718,7 @@ int main()
             else if (GInf.my_matter < 30)
             {
                 auto cell_to_build = cellForRecycler.cell;
-                DBG_MSG_V(cell_to_build->p);
+                DBG_V(cell_to_build->p);
                 if (cell_to_build->can_build)
                 {
                     command.AddBuildRec(cell_to_build->p);
@@ -535,71 +726,26 @@ int main()
                 }
             }
         }
-        DBG_MSG_STR("-------- Recycler part  finished--------");
 
         // Spawn part
-        while (true)
+        DBG_MSG_STR("-------- Spawn part start --------");
         {
-            int myUnitsNum = GInf.myCUnitsNum;
-
-            // TODO: improve
-            // Spawn 1-2 random units
-            std::vector<MapCell*> randSpawn;
-            if (GInf.my_matter >= 60)      getRandomCells(GInf.myCells, randSpawn, 2);
-            else if (GInf.my_matter >= 30) getRandomCells(GInf.myCells, randSpawn, 1);
-
-            DBG_MSG_V(randSpawn.size());
-            for (auto cell : randSpawn)
-                if (cell->can_spawn)
-                {
-                    command.AddSpawn(1, cell->p);
-                    is_spawn = true;
-                    myUnitsNum += 1;
-                }
-
-
-            if (GInf.myCUnitsNum - GInf.mySpawnNum > 1 && myUnitsNum < 1.3*double(GInf.enemyCUnitsNum) && GInf.my_matter >= 20)
+            if (GInf.my_matter >= 20)
             {
-                auto best_for_spawn = findBestForSpawn();
-                if (best_for_spawn.isValid)
+                auto spawnRec = findBestForSpawn();
+                DBG_V(spawnRec.p);
+                if (spawnRec.p.isValid)
                 {
-                    command.AddSpawn(1, best_for_spawn);
+                    command.AddSpawn(spawnRec.units, spawnRec.p, __LINE__);
                     is_spawn = true;
-                    myUnitsNum += 1;
-                }
-                else
-                {
-                    // If bestForSpawn == fail_pos - try to spawn 1 random
-                    std::vector<MapCell*> randSpawn;
-                    getRandomCells(GInf.myCells, randSpawn, 1);
-                    for (auto cell : randSpawn)
-                        if (cell->can_spawn)
-                        {
-                            command.AddSpawn(1, cell->p);
-                            is_spawn = true;
-                            myUnitsNum += 1;
-                        }
                 }
             }
-            else
-            {
-                // Can't spawn more units. exit the cycle
-                break;
-            }
         }
-
-        // TODO: Seems need to remove.
-        if (!is_spawn && GInf.my_matter >= 10)
-        {
-            command.AddSpawn(1, pMyCUnitsG1->p);
-            is_spawn = true;
-        }
-        DBG_MSG_STR("-------- Spawn part  finished--------");
 
         // Global movement
+        DBG_MSG_STR("-------- Global movement start --------");
         // 1) Check if recycler may destroy units. If so - move them to safe cell
-        // 2) Try to select additional rand researcher or move already selected
-        // 3) Move all units to nearest enemy
+        // 2) Move all units to nearest enemy
 
         // ============================================= Global movement 1 =============================================
         for (int i = 0; i < GInf.myCUnits.size(); i++)
@@ -612,7 +758,7 @@ int main()
 
                 // 2 - Try to move to enemy direction
                 Pos enemyDirection = nearestEnemyPos - myCell->p;
-                Pos posToMove = {};
+                Pos posToMove{};
                 if (enemyDirection.x > 0)      { posToMove = myCell->getRight(); }
                 else if (enemyDirection.x < 0) { posToMove = myCell->getLeft(); }
                 else if (enemyDirection.y > 0) { posToMove = myCell->getTop(); }
@@ -624,7 +770,7 @@ int main()
                     auto numUnitsToMove = getMaxToMove(myCell);
                     if (numUnitsToMove > 0)
                     {
-                        command.AddMove(numUnitsToMove, myCell->p, cellToMove->p);
+                        command.AddMove(numUnitsToMove, myCell->p, cellToMove->p, __LINE__);
 
                         // Units already moved and can not do anything else. Lets just remove them
                         GInf.myCUnits.erase(GInf.myCUnits.begin() + i);
@@ -640,7 +786,7 @@ int main()
                         auto numUnitsToMove = getMaxToMove(myCell);
                         if (numUnitsToMove > 0)
                         {
-                            command.AddMove(numUnitsToMove, myCell->p, neighbour->p);
+                            command.AddMove(numUnitsToMove, myCell->p, neighbour->p, __LINE__);
 
                             // Units already moved and can not do anything else. Lets just remove them
                             GInf.myCUnits.erase(GInf.myCUnits.begin() + i);
@@ -651,99 +797,143 @@ int main()
         }
         
         DBG_MSG_STR("After willCellTurnToGrass checks:");
-        DBG_MSG_V(GInf.myCUnits.size());
+        DBG_V(GInf.myCUnits.size());
 
         if (GInf.enemyCUnits.size() > 0)
         {
             // TODO: dummy logic - need to remove
             if (GInf.currentTurn % 2 == 0 && GInf.currentTurn < 10)
             {
+                auto pMyCUnitsG1 = &GInf.getCell(getMyUnitNearestToEnemyPos());
+
                 // unite into one unit: move all units to pMyCUnitsG1
                 for (int i = 0; i < std::max((int)GInf.myCUnits.size() - 1, 1); i++)
                 {
                     auto cell_to_move = GInf.myCUnits[i];
+
+                    // Do not move researcher and invader
+                    if (researcherPos.isValid && cell_to_move->p == researcherPos ||
+                        invaderPos.isValid    && cell_to_move->p == invaderPos)
+                        continue;
+
                     auto numUnitsToMove = getMaxToMove(cell_to_move);
                     if (cell_to_move->p != pMyCUnitsG1->p)
-                        command.AddMove(numUnitsToMove, cell_to_move->p, pMyCUnitsG1->p);
+                    {
+                        command.AddMove(numUnitsToMove, cell_to_move->p, pMyCUnitsG1->p, __LINE__);
+                    }
                 }
             }
             else
             {
                 // ============================================= Global movement 2 =============================================
-                DBG_MSG_V(additionalResearcherPos);
-
-                // Every 5 turns try to select new 'Additional random researcher'
-                if (GInf.currentTurn % 5 == 4)
-                {
-                    std::vector<MapCell*> randCells;
-                    getRandomCells(GInf.myCUnits, randCells, 1);
-                    
-                    if (!randCells.empty())
-                    {
-                        auto randResearchCell = randCells[0];
-                        DBG_MSG_V(randResearchCell->p);
-
-                        // Select random researcher only if num units in cell > 3
-                        auto numUnitsToMove = getMaxToMove(randResearchCell);
-                        if (numUnitsToMove > 3)
-                        {
-                            // TODO: getNearestNooneCellPosToMove often return cell that is my or enemy. Need to add
-                            // if (!p.isValid) then getNearestEnemyEmptyCellPosToMove()
-                            Pos p = getNearestNooneCellPosToMove(randResearchCell);
-                            if (p.isValid)
-                            {
-                                DBG_MSG_STR("============ AdditionalResearcher will be");
-                                DBG_MSG_V(randResearchCell->p);
-                                command.AddMove(numUnitsToMove, randResearchCell->p, p);
-                                randResearchCell->units -= numUnitsToMove;
-                                additionalResearcherPos = p;
-                            }
-                        }
-                    }
-                }
-                else if (additionalResearcherPos.isValid) // If we already select researcher
-                {
-                    auto researcherCell = &GInf.getCell(additionalResearcherPos);
-
-                    // TODO: getNearestNooneCellPosToMove often return cell that is my or enemy. Need to add
-                    // if (!p.isValid) then getNearestEnemyEmptyCellPosToMove()
-                    Pos p = getNearestNooneCellPosToMove(researcherCell);
-                    if (p.isValid)
-                    {
-                        command.AddMove(getMaxToMove(researcherCell), researcherCell->p, p);
-                        researcherCell->units -= numUnitsToMove;
-                        additionalResearcherPos = p;
-                    }
-                }
-
-                // ============================================= Global movement 3 =============================================
-                for (int i = 0; i < std::max((int)GInf.myCUnits.size() - 1, 1); i++)
+                for (int i = 0; i < std::max((int)GInf.myCUnits.size(), 1); i++)
                 {
                     auto cell_to_move = GInf.myCUnits[i];
-                    auto numUnitsToMove = getMaxToMove(cell_to_move);
-                    //if (cell_to_move->p != cell_to_build->p &&
-                    //if (!(cell_to_move->p == pMyCUnitsG1->p))
 
-                    Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, cell_to_move->p);
-                    command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos);
+                    // Do not move researcher and invader
+                    if (researcherPos.isValid && cell_to_move->p == researcherPos ||
+                        invaderPos.isValid    && cell_to_move->p == invaderPos)
+                        continue;
+
+                    auto numUnitsToMove = getMaxToMove(cell_to_move);
+                    if (numUnitsToMove > 0)
+                    {
+                        Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, cell_to_move->p);
+                        command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
+                    }
                 }
             }
         }
-        DBG_MSG_STR("-------- Global movement  finished--------");
 
         // Research part
-        if (GInf.myCUnits.size() > 1)
+        DBG_MSG_STR("-------- Research part start --------");
+        if (!researcherPos.isValid && GInf.my_matter >= 10)
         {
-            auto researcherCell = GInf.myCUnits.back();
-            auto best_for_move = findBestForResearchMove(researcherCell);
-            if (best_for_move.isValid && getMaxToMove(researcherCell) != 0)
+            Pos enemyCenterPos = getUnitsEstCenterPos(GInf.enemyCUnits);
+            int maxDistance = 0;
+            for (auto myCell : GInf.myCells)
             {
-                command.AddMove(researcherCell->units, researcherCell->p, best_for_move);
-                researcherPos = best_for_move;
+                if (myCell->hasUnitsRec())
+                    continue;
+
+                int dist = myCell->p.distanceTo(enemyCenterPos);
+                if (dist > maxDistance)
+                {
+                    auto[pDest, pFirstStep] = getNearest_EnemyOrNoone_CellPosToMove(myCell);
+                    if (pDest.isValid)
+                    {
+                        maxDistance = dist;
+                        researcherPos = myCell->p;
+                        DBG_MSG_V("Nearest_NooneOrEnemy:", pDest);
+                    }
+                }
+            }
+            
+            DBG_MSG_V("Spawn researcher at:", researcherPos);
+            command.AddSpawn(1, researcherPos, __LINE__);
+        }
+        else if (researcherPos.isValid)
+        {
+            auto myResearcher = &GInf.getCell(researcherPos);
+            auto[pNotMyDest, pFirstStep] = getNearest_EnemyOrNoone_CellPosToMove(myResearcher);
+            if (pNotMyDest.isValid)
+            {
+                command.AddMove(myResearcher->units, myResearcher->p, pFirstStep, __LINE__);
+                researcherPos = pFirstStep;
+                DBG_MSG_V("Move researcher to:", pFirstStep);
+            }
+            else
+            {
+                researcherPos.invalidate();
             }
         }
+
+        // Invader part
+        DBG_MSG_STR("-------- Invader part start --------");
+        if (!invaderPos.isValid && GInf.my_matter >= 10 && GInf.myCUnitsNum + GInf.my_matter/10 - 2 > GInf.enemyCUnitsNum + GInf.opp_matter/10)
+        {
+            int maxDistance = 0; // global max distance to nearest enemy
+            for (auto myCell : GInf.myCells)
+            {
+                if (myCell->hasUnitsRec())
+                    continue;
+
+                int cellMinDistToEnemy = INT32_MAX;
+                std::for_each(GInf.enemyCUnits.begin(), GInf.enemyCUnits.end(), [&cellMinDistToEnemy, myCell](MapCell* c) { cellMinDistToEnemy = std::min(cellMinDistToEnemy, myCell->p.distanceTo(c->p)); });
+                if (cellMinDistToEnemy > maxDistance)
+                {
+                    auto[pDest, pFirstStep] = getNearest_Enemy_CellPosToMove(myCell);
+                    if (pDest.isValid)
+                    {
+                        maxDistance = cellMinDistToEnemy;
+                        invaderPos = myCell->p;
+                        DBG_MSG_V("Nearest_Enemy:", pDest);
+                    }
+                }
+            }
             
-        DBG_MSG_STR("-------- Research part  finished--------");
+            DBG_MSG_V("Spawn invader at:", invaderPos);
+            command.AddSpawn(1, invaderPos, __LINE__);
+        }
+        else if (invaderPos.isValid)
+        {
+            DBG_MSG_V("Invader pos:", invaderPos);
+            auto myInvader = &GInf.getCell(invaderPos);
+            auto[pDest, pFirstStep] = getNearest_Enemy_CellPosToMove(myInvader);
+            if (pDest.isValid)
+            {
+                command.AddMove(myInvader->units, myInvader->p, pFirstStep, __LINE__);
+                researcherPos = pFirstStep;
+                DBG_MSG_V("Move invader to:", pFirstStep);
+            }
+            else
+            {
+                invaderPos.invalidate();
+                DBG_MSG_V("Invalidate invader since no enemy cells around:", invaderPos);
+            }
+        }
+
+        DBG_MSG_STR("--------------------------------------");
       
         if (command.empty())
             command.AddWait();
