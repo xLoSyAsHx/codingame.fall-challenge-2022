@@ -347,7 +347,7 @@ Pos findBestForSpawn()
             return cell->p;
         }
     }
-    return {-1, -1};
+    return {};
 }
 
 Pos findBestForResearchMove(MapCell* myCell)
@@ -461,9 +461,7 @@ void getRandomCells(std::vector<MapCell*> &v, std::vector<MapCell*> &out, size_t
 }
 
 int main()
-{
-    Pos fail_pos {-1, -1};
-    
+{    
     Command command;
     
     MapCell* pMyCUnitsG1 = nullptr;
@@ -501,7 +499,7 @@ int main()
         if (GInf.myCUnitsNum < 2)
         {
             std::vector<MapCell*> randSpawn;
-            getRandomCells(GInf.myCells, randSpawn, 4);
+            getRandomCells(GInf.myCells, randSpawn, 10);
 
             for (auto cell : randSpawn)
             {
@@ -544,7 +542,8 @@ int main()
         {
             int myUnitsNum = GInf.myCUnitsNum;
 
-            // Spawn 1-3 random units
+            // TODO: improve
+            // Spawn 1-2 random units
             std::vector<MapCell*> randSpawn;
             if (GInf.my_matter >= 60)      getRandomCells(GInf.myCells, randSpawn, 2);
             else if (GInf.my_matter >= 30) getRandomCells(GInf.myCells, randSpawn, 1);
@@ -562,7 +561,7 @@ int main()
             if (GInf.myCUnitsNum - GInf.mySpawnNum > 1 && myUnitsNum < 1.3*double(GInf.enemyCUnitsNum) && GInf.my_matter >= 20)
             {
                 auto best_for_spawn = findBestForSpawn();
-                if (best_for_spawn != fail_pos)
+                if (best_for_spawn.isValid)
                 {
                     command.AddSpawn(1, best_for_spawn);
                     is_spawn = true;
