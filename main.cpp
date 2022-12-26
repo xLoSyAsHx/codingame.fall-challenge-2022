@@ -45,6 +45,7 @@ struct Pos {
 
 #define DBG_MSG_PTR(v) { std::cerr << "MESSAGE: "#v" = " << *v << std::endl; }
 
+#define DBG_MAP_CELLS(v) { std::cerr << ""#v" = ["; for (auto& el : v) std::cerr << el->p; std::cerr << "]" << std::endl; }
 
 struct MapCell {
     Pos p;
@@ -116,8 +117,15 @@ struct MapCell {
     }
 };
 
+struct ProfitCell {
+    int profit;
+    MapCell* cell;
+};
+
 struct GameInfo
 {
+    std::mt19937 random_device{std::random_device{}()};
+
     int currentTurn = -1;
 
     int my_matter  = 0;
@@ -190,8 +198,6 @@ struct GameInfo
                     enemyCUnits.emplace_back(pCell);
                     enemyCUnitsNum += pCell->units;
                 }
-
-                //DBG_MSG3_V(map[i][j].p, map[i][j].units, map[i][j].recycler);
             }
         }
 
@@ -210,19 +216,9 @@ struct GameInfo
         return map[0][0];
     }
 
-    /*
-    bool canMoveOnDist(MapCell* cell, int stepsLeft);
-    {
-        for (auto neighbour : cell->getCellNeighbours())
-        {
-            if (canMoveOnDist(neighbour, stepsLeft - 1))
-        }
-    }
-    */
-
     void validate()
     {
-
+        // TODO: Use wave-algorithm with depth 7-15. If my unit inside separated area - need to fully expance it
 
         // Remove enemy if we can't achieve it
         std::vector<MapCell*> toRemove = {};
@@ -234,20 +230,7 @@ struct GameInfo
                 {
                     bRemove = false;
                     break;
-                    /*
-                    auto neighbour2 = neighbour->getCellNeighbours();
-                    neighbour2.erase(std::find(neighbour2.begin(), neighbour2.end(), neighbour));
-                    for (auto neighbour : neighbour2)
-                    {
-                        if (!neighbour->recycler)
-                        {
-                            bRemove = false;
-                            goto nextStage;
-                        }
-                    }
-                    */
                 }
-            
 
             if (bRemove)
             {
@@ -262,9 +245,8 @@ struct GameInfo
             enemyCUnits.erase(std::find(enemyCUnits.begin(), enemyCUnits.end(), el));
         }
 
-
-
-        // Remove my units
+        // Remove my units if they can't move.
+        // TODO: Need to safe this cells to not spawn new units into it
         std::vector<MapCell*> myToRemove = {};
         for (auto cUnit : myCUnits)
         {
@@ -280,6 +262,8 @@ struct GameInfo
             DBG_MSG_V(el);
             myCUnits.erase(std::find(myCUnits.begin(), myCUnits.end(), el));
         }
+
+        DBG_MSG_STR("-------- Validation part finished--------");
     }
 
 } GInf;
@@ -287,24 +271,23 @@ struct GameInfo
 std::vector<std::vector<MapCell>>& MapCell::map = GInf.map;
 
 
-struct Command {
+class Command {
     std::stringstream ss;
-    bool bHasCommands = false;
+    bool bEmpty = true;
 
-    void Clear()  { ss.str(""); bHasCommands = false; }
+public:
+    bool empty() const { return bEmpty; }
+
+    void Clear()  { ss.str(""); bEmpty = true; }
     void Submit() { std::cout << ss.str() << std::endl; }
 
-    void AddBuildRec(Pos p)                    { bHasCommands = true; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 1; }
-    void AddMove(int amount, Pos from, Pos to) { bHasCommands = true; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;}
-    void AddSpawn(int amount, Pos p)           { bHasCommands = true; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += amount; GInf.my_matter -= amount; }
-    void AddWait()                             { bHasCommands = true; ss << "WAIT"; }
+    void AddBuildRec(Pos p)                    { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 1; }
+    void AddMove(int amount, Pos from, Pos to) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;}
+    void AddSpawn(int amount, Pos p)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += amount; GInf.my_matter -= amount; }
+    void AddWait()                             { bEmpty = false; ss << "WAIT"; }
 };
 
-struct ProfitCell {
-    int profit;
-    MapCell* cell;
-};
-//std::array<ProfitCell, 3> findBestRecycler()
+
 ProfitCell findBestRecycler()
 {
     std::array<ProfitCell, 3> res = {};
@@ -340,24 +323,10 @@ ProfitCell findBestRecycler()
         auto& cell = GInf.getCell(p);
         int cellProfit = cell.getRecyclerProfit();
 
-        //DBG_MSG2_V(p, &cell);
-
         res_queue.push(ProfitCell{ cellProfit, &cell });
         if (res_queue.size() > 3)
             res_queue.pop(); // remove el with the smallest priority
     });
-
-    //DBG_MSG2_V(res_queue.top().cell, res_queue.top().cell);
-
-    /*
-    auto resIt = res.rend();
-    for (int i = 0; i < res_queue.size(); ++i)
-    {
-        ++resIt;
-        *resIt = res_queue.top();
-        res_queue.pop();
-    }
-    */
 
     if (res_queue.empty())
         return {};
@@ -383,6 +352,9 @@ Pos findBestForSpawn()
 
 Pos findBestForResearchMove(MapCell* myCell)
 {
+    // TODO: Need to try to move away ffrom enemies
+    // Example: if my{ 5, 0 }, nearest_enemy{ 3, 0 }, need to move Right or Bottom
+
     std::array<Pos, 4> candidates  = {
         myCell->getLeft(),
         myCell->getTop(),
@@ -400,20 +372,10 @@ Pos findBestForResearchMove(MapCell* myCell)
         }
     }
 
-
-    /*
-    auto neigbourCells = myCell->getCellNeighbours();
-    for (auto cell : neigbourCells)
-    {
-        if (cell->isValid() && !cell->isMy() && !cell->recycler && myCell->p < cell->p)
-            return cell->p;
-    }
-    */
-
-
     return {};
 }
 
+// TODO: Do not use this dummy function
 Pos getUnitsEstCenterPos(std::vector<MapCell*>& units)
 {
     if (units.empty())
@@ -453,7 +415,7 @@ Pos getMyUnitNearestToEnemyPos()
     return getNearestUnitToPos(GInf.myCUnits, enemyCenterEstPos);
 }
 
-bool willTurnToGrass(MapCell* cell)
+bool willCellTurnToGrass(MapCell* cell)
 {
     int currScrapAmount = cell->scrap_amount;
     for (auto neighbour : cell->getCellNeighbours())
@@ -467,11 +429,15 @@ bool willTurnToGrass(MapCell* cell)
 
 int getMaxToMove(MapCell* cell)
 {
+    // TODO: maybe need to refine
+
+    // If algorithm spawn units or moved them - we need to take it into account
     return std::min(cell->units, GInf.myCUnitsNum - GInf.mySpawnNum - GInf.myMovedNum - 1);
 }
 
 Pos getNearestNooneCellPosToMove(MapCell* curCell)
 {
+    // TODO: use wave-algorithm with depth 5-7
     for (auto cell : curCell->getCellNeighbours())
     {
         if (cell->isNobodys() || (cell->isEnemy() && cell->recycler == 0))
@@ -485,6 +451,13 @@ Pos getNearestNooneCellPosToMove(MapCell* curCell)
     }
 
     return {};
+}
+
+void getRandomCells(std::vector<MapCell*> &v, std::vector<MapCell*> &out, size_t nelems)
+{
+    std::sample(v.begin(), v.end(), std::back_inserter(out),
+        nelems,
+        GInf.random_device);
 }
 
 int main()
@@ -514,18 +487,7 @@ int main()
         bool is_spawn = false;
 
         DBG_MSG_V(GInf.currentTurn);
-        std::cerr << "MESSAGE: GInf.myCUnits pos = ";
-        for (auto el : GInf.myCUnits)
-            std::cerr << el->p;
-        std::cerr << std::endl;
-
-        // DBG_MSG_V(GInf.myCUnits.size());
-        // DBG_MSG_V(GInf.enemyCUnits.size());
-        // DBG_MSG_V(GInf.myCUnitsNum);
-        // DBG_MSG_V(GInf.enemyCUnitsNum);
-
-        // Write an action using cout. DON'T FORGET THE "<< endl"
-        // To debug: cerr << "Debug messages..." << endl;
+        DBG_MAP_CELLS(GInf.myCUnits);
 
         pMyCUnitsG1 = &GInf.getCell(getMyUnitNearestToEnemyPos());
         DBG_MSG_V(pMyCUnitsG1->p);
@@ -534,13 +496,12 @@ int main()
         DBG_MSG_V(nearestEnemyPos);
 
 
+        // If number of units too small - spend all matters to spawn units
+        // TODO: Maybe need to spawn near the enemy
         if (GInf.myCUnitsNum < 2)
         {
             std::vector<MapCell*> randSpawn;
-            size_t nelems = 4;
-            std::sample(GInf.myCells.begin(), GInf.myCells.end(), std::back_inserter(randSpawn),
-                nelems,
-                std::mt19937{std::random_device{}()});
+            getRandomCells(GInf.myCells, randSpawn, 4);
 
             for (auto cell : randSpawn)
             {
@@ -552,40 +513,12 @@ int main()
                 }
             }
         }
-
-        // command.AddMove(pMyCUnitsG1->units, pMyCUnitsG1->p, nearestEnemyPos);
-
         
 
-        // Select Researcher
-        /*
-        if (!researcherPos.isValid)
-        {
-            int maxDistance = 0;
-            for (auto el : GInf.myCUnits)
-                if (int newDist = el->p.distanceTo(nearestEnemyPos); newDist > maxDistance)
-                {
-                    maxDistance = newDist;
-                    researcherPos = el->p;
-                }
+        // TODO: Add logic to select smallest and far away from enemy unit as Researcher
 
-        }
-        MapCell* researcherCell = nullptr;
 
-        if (GInf.myCUnits.size() > 1)
-        {
-            researcherCell = &GInf.getCell(researcherPos);
-            GInf.myCUnits.erase(std::find(GInf.myCUnits.begin(), GInf.myCUnits.end(), researcherCell)); // remove researcher if there are another units
-            DBG_MSG_V(researcherCell->p);
-        }
-        else
-        {
-            DBG_MSG_STR("NO Researcher");
-        }
-
-        DBG_MSG_STR("-------- Researcher select part finished --------");
-        */
-
+        // 
         if (GInf.myRecycleNum < 1 && GInf.my_matter >= 10)
         {
             ProfitCell cellForRecycler = findBestRecycler();
@@ -604,27 +537,18 @@ int main()
                 }
             }
         }
+        DBG_MSG_STR("-------- Recycler part  finished--------");
 
         // Spawn part
         while (true)
         {
             int myUnitsNum = GInf.myCUnitsNum;
 
+            // Spawn 1-3 random units
             std::vector<MapCell*> randSpawn;
-            if (GInf.my_matter >= 50)
-            {
-                size_t nelems = 3;
-                std::sample(GInf.myCells.begin(), GInf.myCells.end(), std::back_inserter(randSpawn),
-                    nelems,
-                    std::mt19937{std::random_device{}()});
-            }
-            else if (GInf.my_matter >= 30)
-            {
-                size_t nelems = 1;
-                std::sample(GInf.myCells.begin(), GInf.myCells.end(), std::back_inserter(randSpawn),
-                    nelems,
-                    std::mt19937{std::random_device{}()});
-            }
+            if (GInf.my_matter >= 60)      getRandomCells(GInf.myCells, randSpawn, 2);
+            else if (GInf.my_matter >= 30) getRandomCells(GInf.myCells, randSpawn, 1);
+
             DBG_MSG_V(randSpawn.size());
             for (auto cell : randSpawn)
                 if (cell->can_spawn)
@@ -635,7 +559,7 @@ int main()
                 }
 
 
-            if (GInf.myCUnitsNum - GInf.mySpawnNum > 1 && myUnitsNum < 1.3*double(GInf.enemyCUnitsNum) && GInf.my_matter >= 30)
+            if (GInf.myCUnitsNum - GInf.mySpawnNum > 1 && myUnitsNum < 1.3*double(GInf.enemyCUnitsNum) && GInf.my_matter >= 20)
             {
                 auto best_for_spawn = findBestForSpawn();
                 if (best_for_spawn != fail_pos)
@@ -646,24 +570,9 @@ int main()
                 }
                 else
                 {
-                    //command.AddSpawn(1, pMyCUnitsG1->p);
-                    //is_spawn = true;
-                    //myUnitsNum += 1;
+                    // If bestForSpawn == fail_pos - try to spawn 1 random
                     std::vector<MapCell*> randSpawn;
-                    if (GInf.my_matter >= 50)
-                    {
-                        size_t nelems = 3;
-                        std::sample(GInf.myCells.begin(), GInf.myCells.end(), std::back_inserter(randSpawn),
-                            nelems,
-                            std::mt19937{std::random_device{}()});
-                    }
-                    else if (GInf.my_matter >= 30)
-                    {
-                        size_t nelems = 1;
-                        std::sample(GInf.myCells.begin(), GInf.myCells.end(), std::back_inserter(randSpawn),
-                            nelems,
-                            std::mt19937{std::random_device{}()});
-                    }
+                    getRandomCells(GInf.myCells, randSpawn, 1);
                     for (auto cell : randSpawn)
                         if (cell->can_spawn)
                         {
@@ -671,15 +580,16 @@ int main()
                             is_spawn = true;
                             myUnitsNum += 1;
                         }
-
                 }
             }
             else
             {
+                // Can't spawn more units. exit the cycle
                 break;
             }
         }
 
+        // TODO: Seems need to remove.
         if (!is_spawn && GInf.my_matter >= 10)
         {
             command.AddSpawn(1, pMyCUnitsG1->p);
@@ -688,23 +598,29 @@ int main()
         DBG_MSG_STR("-------- Spawn part  finished--------");
 
         // Global movement
-        // 1) Check if recycler may destroy units
-        // 2) Firstly - unite into one unit; Secondly - move; Repeat
+        // 1) Check if recycler may destroy units. If so - move them to safe cell
+        // 2) Try to select additional rand researcher or move already selected
+        // 3) Move all units to nearest enemy
+
+        // ============================================= Global movement 1 =============================================
         for (int i = 0; i < GInf.myCUnits.size(); i++)
         {
             auto myCell = GInf.myCUnits[i];
-            if (willTurnToGrass(myCell))
+            if (willCellTurnToGrass(myCell))
             {
-                // Firstly try to move to enemy direction
+                // 1 - Find nearest enemy pos to current unit
+                Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, myCell->p);
+
+                // 2 - Try to move to enemy direction
                 Pos enemyDirection = nearestEnemyPos - myCell->p;
                 Pos posToMove = {};
-                if (enemyDirection.x > 0) { posToMove = myCell->getRight(); }
+                if (enemyDirection.x > 0)      { posToMove = myCell->getRight(); }
                 else if (enemyDirection.x < 0) { posToMove = myCell->getLeft(); }
                 else if (enemyDirection.y > 0) { posToMove = myCell->getTop(); }
                 else if (enemyDirection.y < 0) { posToMove = myCell->getBottom(); }
                 
                 auto cellToMove = &GInf.getCell(posToMove);
-                if (posToMove.isValid && cellToMove->scrap_amount && !willTurnToGrass(cellToMove))
+                if (posToMove.isValid && cellToMove->scrap_amount && !willCellTurnToGrass(cellToMove))
                 {
                     auto numUnitsToMove = getMaxToMove(myCell);
                     if (numUnitsToMove > 0)
@@ -717,31 +633,33 @@ int main()
                     }
                 }
 
+                // 3 - Can't move to 'cellToMove' try to move somewhere
                 for (auto neighbour : myCell->getCellNeighbours())
                 {
-                    if (!neighbour->recycler && !willTurnToGrass(neighbour))
+                    if (!neighbour->recycler && !willCellTurnToGrass(neighbour))
                     {
                         auto numUnitsToMove = getMaxToMove(myCell);
                         if (numUnitsToMove > 0)
                         {
                             command.AddMove(numUnitsToMove, myCell->p, neighbour->p);
+
+                            // Units already moved and can not do anything else. Lets just remove them
+                            GInf.myCUnits.erase(GInf.myCUnits.begin() + i);
                         }
                     }
                 }
-
-                // Units already moved and can not do anything else. Lets just remove them
-                GInf.myCUnits.erase(GInf.myCUnits.begin() + i);
             }
         }
         
-        DBG_MSG_STR("myCUnits to move:");
+        DBG_MSG_STR("After willCellTurnToGrass checks:");
         DBG_MSG_V(GInf.myCUnits.size());
 
         if (GInf.enemyCUnits.size() > 0)
         {
+            // TODO: dummy logic - need to remove
             if (GInf.currentTurn % 2 == 0 && GInf.currentTurn < 10)
             {
-                // unite into one unit
+                // unite into one unit: move all units to pMyCUnitsG1
                 for (int i = 0; i < std::max((int)GInf.myCUnits.size() - 1, 1); i++)
                 {
                     auto cell_to_move = GInf.myCUnits[i];
@@ -752,32 +670,31 @@ int main()
             }
             else
             {
+                // ============================================= Global movement 2 =============================================
                 DBG_MSG_V(additionalResearcherPos);
 
-                // Additional rand research
+                // Every 5 turns try to select new 'Additional random researcher'
                 if (GInf.currentTurn % 5 == 4)
                 {
-                    std::vector<MapCell*> randResearchers;
-                    std::sample(GInf.myCells.begin(), GInf.myCells.end() - 1, std::back_inserter(randResearchers),
-                        1,
-                        std::mt19937{std::random_device{}()});
+                    std::vector<MapCell*> randCells;
+                    getRandomCells(GInf.myCUnits, randCells, 1);
                     
-                    if (!randResearchers.empty())
+                    if (!randCells.empty())
                     {
-                        auto randResearchCell = randResearchers[0];
-                        Pos xxxxxxxxxxx_randResearcherPos = randResearchCell->p;
-                        DBG_MSG_V(xxxxxxxxxxx_randResearcherPos);
+                        auto randResearchCell = randCells[0];
+                        DBG_MSG_V(randResearchCell->p);
 
+                        // Select random researcher only if num units in cell > 3
                         auto numUnitsToMove = getMaxToMove(randResearchCell);
                         if (numUnitsToMove > 3)
                         {
-                            numUnitsToMove = std::max(1, (int)(numUnitsToMove * 0.1));
-
+                            // TODO: getNearestNooneCellPosToMove often return cell that is my or enemy. Need to add
+                            // if (!p.isValid) then getNearestEnemyEmptyCellPosToMove()
                             Pos p = getNearestNooneCellPosToMove(randResearchCell);
                             if (p.isValid)
                             {
                                 DBG_MSG_STR("============ AdditionalResearcher will be");
-                                DBG_MSG_V(p);
+                                DBG_MSG_V(randResearchCell->p);
                                 command.AddMove(numUnitsToMove, randResearchCell->p, p);
                                 randResearchCell->units -= numUnitsToMove;
                                 additionalResearcherPos = p;
@@ -785,24 +702,22 @@ int main()
                         }
                     }
                 }
-                else if (additionalResearcherPos.isValid)
+                else if (additionalResearcherPos.isValid) // If we already select researcher
                 {
                     auto researcherCell = &GInf.getCell(additionalResearcherPos);
-                    auto numUnitsToMove = getMaxToMove(researcherCell);
-                    if (numUnitsToMove > 5)
-                    {
-                        numUnitsToMove = std::max(1, (int)(numUnitsToMove * 0.1));
 
-                        Pos p = getNearestNooneCellPosToMove(researcherCell);
-                        if (p.isValid)
-                        {
-                            command.AddMove(numUnitsToMove, researcherCell->p, p);
-                            researcherCell->units -= numUnitsToMove;
-                            additionalResearcherPos = p;
-                        }
+                    // TODO: getNearestNooneCellPosToMove often return cell that is my or enemy. Need to add
+                    // if (!p.isValid) then getNearestEnemyEmptyCellPosToMove()
+                    Pos p = getNearestNooneCellPosToMove(researcherCell);
+                    if (p.isValid)
+                    {
+                        command.AddMove(getMaxToMove(researcherCell), researcherCell->p, p);
+                        researcherCell->units -= numUnitsToMove;
+                        additionalResearcherPos = p;
                     }
                 }
 
+                // ============================================= Global movement 3 =============================================
                 for (int i = 0; i < std::max((int)GInf.myCUnits.size() - 1, 1); i++)
                 {
                     auto cell_to_move = GInf.myCUnits[i];
@@ -831,7 +746,7 @@ int main()
             
         DBG_MSG_STR("-------- Research part  finished--------");
       
-        if (!command.bHasCommands)
+        if (command.empty())
             command.AddWait();
 
         command.Submit();
