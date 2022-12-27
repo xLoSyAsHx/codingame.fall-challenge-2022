@@ -6,6 +6,7 @@
 #include <array>
 #include <queue>
 
+#include <memory>
 #include <random>
 #include <numeric>
 #include <algorithm>
@@ -316,7 +317,7 @@ public:
     void AddSpawn(int amount, Pos p, int line)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
                                                                         errSS << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << " l=" << line << "; "; }
     void AddWait()                                       { bEmpty = false; ss << "WAIT"; }
-};
+} command;
 
 
 bool willCellTurnToGrass(MapCell* cell)
@@ -649,20 +650,32 @@ void getRandomCells(std::vector<MapCell*> &v, std::vector<MapCell*> &out, size_t
         GInf.random_device);
 }
 
-int main()
-{    
-    Command command;
+class StrategyInterface
+{
+public:
+    void Execute()
+    {
+        OnTurnStart();
+        OnRecyclerPart();
+        OnSpawnPart();
+        OnMovementPart();
+        OnSpecialUnitsPart();
+    }
 
-    Pos researcherPos{};
-    Pos invaderPos{};
+protected:
+    virtual void OnTurnStart() = 0;
+    virtual void OnRecyclerPart() = 0;
+    virtual void OnSpawnPart() = 0;
+    virtual void OnMovementPart() = 0;
+    virtual void OnSpecialUnitsPart() = 0;
+};
 
-    // game loop
-    GInf.ReadMapDimention();
-    while (1) {
-        GInf.ReadMatters();
-        GInf.ReadCellsInput();
-        command.Clear();
+class Strategy_1Hunter_1Researcher_1Invader final : public StrategyInterface
+{
+protected:
 
+    void OnTurnStart()
+    {
         if (!GInf.isMyValid(researcherPos)) researcherPos.invalidate();
         if (!GInf.isMyValid(invaderPos))    invaderPos.invalidate();
 
@@ -678,8 +691,6 @@ int main()
             DBG_MSG_V("WARN - Invider in dangerous - behave like normal unit", invaderPos);
             invaderPos.invalidate();
         }
-
-        bool is_spawn = false;
 
         DBG_V(GInf.currentTurn);
         DBG_MAP_CELLS(GInf.myCUnits);
@@ -701,12 +712,10 @@ int main()
                 }
             }
         }
-        
+    }
 
-        // TODO: Add logic to select smallest and far away from enemy unit as Researcher
-
-
-        // 
+    void OnRecyclerPart()
+    {
         DBG_MSG_STR("-------- Recycler part start --------");
         if (GInf.myRecycleNum < 1 && GInf.my_matter >= 10)
         {
@@ -726,8 +735,10 @@ int main()
                 }
             }
         }
+    }
 
-        // Spawn part
+    void OnSpawnPart()
+    {
         DBG_MSG_STR("-------- Spawn part start --------");
         {
             if (GInf.my_matter >= 20)
@@ -737,11 +748,13 @@ int main()
                 if (spawnRec.p.isValid)
                 {
                     command.AddSpawn(spawnRec.units, spawnRec.p, __LINE__);
-                    is_spawn = true;
                 }
             }
         }
+    }
 
+    void OnMovementPart()
+    {
         // Global movement
         DBG_MSG_STR("-------- Global movement start --------");
         // 1) Check if recycler may destroy units. If so - move them to safe cell
@@ -844,7 +857,10 @@ int main()
                 }
             }
         }
-
+    }
+    
+    void OnSpecialUnitsPart()
+    {
         // Research part
         DBG_MSG_STR("-------- Research part start --------");
         if (!researcherPos.isValid && GInf.my_matter >= 10)
@@ -934,6 +950,30 @@ int main()
         }
 
         DBG_MSG_STR("--------------------------------------");
+    }
+
+private:
+    Pos researcherPos{};
+    Pos invaderPos{};
+};
+
+int main()
+{
+    std::unique_ptr<StrategyInterface> strategyItf;
+
+    // game loop
+    GInf.ReadMapDimention();
+    while (1) {
+        GInf.ReadMatters();
+        GInf.ReadCellsInput();
+        command.Clear();
+
+        if (GInf.currentTurn == 0)
+        {
+            strategyItf.reset(new Strategy_1Hunter_1Researcher_1Invader);
+        }
+        
+        strategyItf->Execute();
       
         if (command.empty())
             command.AddWait();
