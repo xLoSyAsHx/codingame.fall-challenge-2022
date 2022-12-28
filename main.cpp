@@ -1150,22 +1150,6 @@ protected:
                     {
                         command.AddSpawn(enemies - pCell->units, pCell->p, __LINE__);
                     }
-                    
-                        DBG_V3(getEnemyNeighboursCount_D1(pCell), pCell->units, pCell->p);
-                        DBG_V3(pCell->recycler, pCell->recyclerNextStep, !willCellTurnToGrass(pCell));
-                        if (pCell->p == Pos{10, 9})
-                        {
-                            int currScrapAmount = pCell->scrap_amount;
-                            DBG_V(pCell->scrap_amount);
-                            for (auto neighbour : pCell->getCellNeighbours())
-                            {
-                                if (neighbour->recycler)
-                                {
-                                    DBG_V(neighbour->p);
-                                    --currScrapAmount;
-                                }
-                            }
-                        }
                 }
         }
     }
