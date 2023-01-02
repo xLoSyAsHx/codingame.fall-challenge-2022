@@ -163,6 +163,9 @@ struct GameInfo
     int my_matter  = 0;
     int opp_matter = 0;
 
+    bool bOppRight = false;
+    bool bAsymmetricMap = false;
+
     Pos prev_spawn {-1, -1};
 
     std::vector<std::vector<MapCell>> map = {};
@@ -263,6 +266,16 @@ struct GameInfo
             initialDistanceToEnemy = getUnitsEstCenterPos(myCUnits).distanceTo(initiaEstEnemyCenter);
             DBG_V(initiaEstEnemyCenter);
             DBG_V(initialDistanceToEnemy);
+
+            // Opponent on the right or on the left
+            Pos myCenter = getUnitsEstCenterPos(myCUnits);
+            Pos enemyCenter = getUnitsEstCenterPos(enemyCUnits);
+            if ((enemyCenter - myCenter).x > 0) bOppRight = true;
+            else                                bOppRight = false;
+
+            DBG_V2(myCenter, enemyCenter);
+            if (std::abs(enemyCenter.y - myCenter.y) > 1) bAsymmetricMap = true;
+            else                                          bAsymmetricMap = false;
         }
 
         validate();
@@ -376,6 +389,12 @@ public:
 } command;
 
 
+bool isOnEnemySide(MapCell* cell)
+{
+    if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2;
+    else                return cell->p.x < g_mapWidth/2;
+}
+
 bool willCellTurnToGrass(MapCell* cell)
 {
     int currScrapAmount = cell->scrap_amount;
@@ -420,7 +439,7 @@ int getEnemyNeighboursCount(MapCell* cell)
     int numEnemies = 0;
     for (auto neighbour : cell->getCellNeighbours())
     {
-        if (neighbour->isMyUnit())
+        if (neighbour->isMyUnit() || neighbour->recycler)
             continue;
 
         if (neighbour->isEnemyUnit())
@@ -1082,15 +1101,7 @@ protected:
         for (int i = 0; i < map.size(); ++i)
             map[i] = GInf.WAmap[i];
 
-        // Opponent on the right or on the left
-        Pos myCenter = getUnitsEstCenterPos(GInf.myCUnits);
-        Pos enemyCenter = getUnitsEstCenterPos(GInf.enemyCUnits);
-        if ((enemyCenter - myCenter).x > 0) bOppRight = true;
-        else                                bOppRight = false;
-
-        DBG_V2(myCenter, enemyCenter);
-        if (std::abs(enemyCenter.y - myCenter.y) > 1) bAsymmetricMap = true;
-        else                                          bAsymmetricMap = false;
+        bOppRight = GInf.bOppRight;
 
         // Select reseachers
         for (auto pCell : GInf.myCUnits)
@@ -1362,6 +1373,11 @@ protected:
                 {
                     Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, cell_to_move->p);
                     Pos enemySubMyPos = nearestEnemyPos - cell_to_move->p;
+
+                    auto nearEnemyCell_toMove = getNearest_Enemy_CellPosToMove(cell_to_move); 
+                    auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move); 
+                    
+
                     if (cell_to_move->p.distanceTo(nearestEnemyPos) == 1)
                     {
                         numUnitsToMove = std::max(numUnitsToMove - getEnemyNeighboursCount_D1(cell_to_move), 0);
@@ -1371,6 +1387,12 @@ protected:
                     {
                         enemySubMyPos.x = 0;
                         command.AddMove(numUnitsToMove, cell_to_move->p, cell_to_move->p + enemySubMyPos, __LINE__);
+                    }
+                    else if (cell_to_move->p.distanceTo(nearestEnemyPos) > 5 && isOnEnemySide(cell_to_move) &&
+                            (nearEnemyCell_toMove.pDest.isValid || nearEnemyNooneCell_toMove.pDest.isValid)) // Enemy on corner. Better to go top or bot
+                    {
+                        if (nearEnemyCell_toMove.pDest.isValid) command.AddMove(numUnitsToMove, cell_to_move->p, nearEnemyCell_toMove.firstToMove, __LINE__);
+                        else                                    command.AddMove(numUnitsToMove, cell_to_move->p, nearEnemyNooneCell_toMove.firstToMove, __LINE__);
                     }
                     else
                         command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
@@ -1697,9 +1719,9 @@ private:
             std::cerr << std::endl;
 
             // Determine target
-            DBG_V(bAsymmetricMap);
+            DBG_V(GInf.bAsymmetricMap);
             Pos targetP{};
-            if (!bAsymmetricMap)
+            if (!GInf.bAsymmetricMap)
             {
                 std::vector<int> targetYToCheck{};
                 targetYToCheck.resize(g_mapHeight-1);
@@ -1760,11 +1782,9 @@ private:
                 DBG_MSG_ARR_V(yToIterate);
                 for (int y : yToIterate)
                 {
-                            std::cerr << std::endl << "y == " << y << "; iterate val x: ";
                     bool bFound = false;
                     for (int x : xToIterate)
                         {
-                            std::cerr << " " << x;
                             if (map[y][x] > 0 && map[y][x] < GInf.WA_ENEMY && ((bOppRight ? map[y][x+1] : map[y][x-1]) >= GInf.WA_ENEMY))
                             {
                                 targetP = Pos{ x, y, true };
@@ -1807,7 +1827,6 @@ private:
     }
 
     bool bOppRight = false; // if true - my units on the left, enemy on the right
-    bool bAsymmetricMap = false;
     bool bNeedToProtectRoute = true;
 
     // Reseachers
