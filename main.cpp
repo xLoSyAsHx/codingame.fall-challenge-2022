@@ -407,6 +407,17 @@ bool willCellTurnToGrass(MapCell* cell)
     return currScrapAmount <= 0;
 }
 
+bool hasRecyclerNeighbours(MapCell* pCell)
+{
+    for (auto neighbour : pCell->getCellNeighbours())
+    {
+        if (neighbour->recycler || neighbour->recyclerNextStep)
+            return true;
+    }
+
+    return false;
+}
+
 bool hasEnemyNeighbours(MapCell* cell)
 {
     for (auto neighbour : cell->getCellNeighbours())
@@ -435,44 +446,52 @@ int getEnemyNeighboursCount_D1(MapCell* cell)
 int getEnemyNeighboursCount(MapCell* cell)
 {
     // Wave depth == 2
+    std::vector<MapCell*> neighbours;
+    neighbours.reserve(14);
 
-    int numEnemies = 0;
     for (auto neighbour : cell->getCellNeighbours())
     {
-        if (neighbour->isMyUnit() || neighbour->recycler)
+        if (!neighbour->isEnemyUnit())
             continue;
 
-        if (neighbour->isEnemyUnit())
-            numEnemies += neighbour->units;
-
+        neighbours.emplace_back(neighbour);
         for (auto neighbour2 : neighbour->getCellNeighbours())
         {
-            if (neighbour2->p != neighbour->p && neighbour2->isEnemyUnit())
-                numEnemies += neighbour2->units;
+            if (!neighbour2->isEnemyUnit())
+                continue;
+
+            neighbours.emplace_back(neighbour2);
         }
     }
 
-    return numEnemies;
+    neighbours.erase(std::unique(neighbours.begin(), neighbours.end()), neighbours.end());
+    return std::accumulate(neighbours.begin(), neighbours.end(), 0, [](int u, MapCell* pCell) { return u + pCell->units; });
 }
 
 int getMyNeighboursCount(MapCell* cell)
 {
     // Wave depth == 2
+    std::vector<MapCell*> neighbours;
+    neighbours.reserve(14);
 
-    int numMy = 0;
     for (auto neighbour : cell->getCellNeighbours())
     {
-        if (neighbour->isMyUnit())
-            numMy += neighbour->units;
+        if (!neighbour->isEnemyUnit())
+            continue;
+
+        neighbours.emplace_back(neighbour);
 
         for (auto neighbour2 : neighbour->getCellNeighbours())
         {
-            if (neighbour2->p != neighbour->p && neighbour2->isMyUnit())
-                numMy += neighbour2->units;
+            if (!neighbour2->isEnemyUnit())
+                continue;
+
+            neighbours.emplace_back(neighbour2);
         }
     }
 
-    return numMy;
+    neighbours.erase(std::unique(neighbours.begin(), neighbours.end()), neighbours.end());
+    return std::accumulate(neighbours.begin(), neighbours.end(), 0, [](int u, MapCell* pCell) { return u + pCell->units; });
 }
 
 Pos getNearestUnitToPos(std::vector<MapCell*>& units, Pos startP)
@@ -571,8 +590,6 @@ std::vector<SpawnRecomendation> findBestForSpawn()
      * Best for spawn search steps in priority order
      *
      * 1) If there are enemies near my units in 2-cells radius - spawn as much as possible to protect (if will not turn to grass)
-     * 2) Find normal cell which will not turn into grass
-     * 3) Find my unit nearest to enemy and spawn here
     */
    std::vector<SpawnRecomendation> recomendations{};
    int matter = GInf.my_matter;
@@ -580,44 +597,39 @@ std::vector<SpawnRecomendation> findBestForSpawn()
    // ----- 1 -----
     for (auto pBestForSpawnSell : GInf.myCUnits)
     {
-        if (int numEnemies = getEnemyNeighboursCount(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell))
+        if (int numEnemies = getEnemyNeighboursCount(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+            && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
+            && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
+        {
+            if (matter < 10)
+                break;
+
+            int toSpawn = std::min(matter / 10, getEnemyNeighboursCount(pBestForSpawnSell) + 1);
+
+            DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+            matter -= toSpawn;
+            recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
+        }
+    }
+    
+   // ----- 1.5 -----
+   // Protect my cells
+    for (auto pBestForSpawnSell : GInf.myCells)
+    {
+        if (int numEnemies = getEnemyNeighboursCount_D1(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+            && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
+            && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
         {
             if (matter < 10)
                 break;
 
             int toSpawn = std::min(matter / 10, getEnemyNeighboursCount(pBestForSpawnSell));
 
-            DBG_V2(pBestForSpawnSell->p, toSpawn);
+            DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
             matter -= toSpawn;
             recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
         }
     }
-
-    // ----- 2 -----
-    /*
-    if (GInf.myCUnitsNum < 1.3*double(GInf.enemyCUnitsNum))
-    {
-        for (auto pBestForSpawnSell : GInf.myCells)
-        {
-            size_t neighboursNum = pBestForSpawnSell->getCellNeighbours().size();
-            if (neighboursNum > 3 && pBestForSpawnSell->can_spawn && pBestForSpawnSell->p != GInf.prev_spawn && !willCellTurnToGrass(pBestForSpawnSell))
-            {
-                DBG_V(pBestForSpawnSell->p);
-                GInf.prev_spawn = pBestForSpawnSell->p;
-                return { pBestForSpawnSell->p, 1 };
-            }
-        }
-    }
-    */
-
-    // ----- 3 -----
-    /*
-    Pos p = getMyUnitNearestToEnemyPos();
-    if (p.isValid)
-    {
-        return { p, 1 };
-    }
-    */
 
     return recomendations;
 }
@@ -657,8 +669,6 @@ int getMaxToMove(MapCell* cell)
 
 Pos getNearestNooneCellPosToMove(MapCell* curCell)
 {
-    // TODO: use wave-algorithm with depth 5-7
-
     // Depth 1
     for (auto cell : curCell->getCellNeighbours())
     {
@@ -679,12 +689,6 @@ Pos getNearestNooneCellPosToMove(MapCell* curCell)
     return {};
 }
 
-/*
-struct PosRoute {
-    Pos p;
-    std::vector<Pos>
-};
-*/
 struct Poses_DestFirst {
     Pos pDest;
     Pos firstToMove;
@@ -692,7 +696,6 @@ struct Poses_DestFirst {
 Poses_DestFirst getNearest_Enemy_CellPosToMove(MapCell* curCell)
 {
     Poses_DestFirst res{};
-    // TODO: use wave-algorithm with depth 5-7
 
     // Depth 1
     for (auto cell : curCell->getCellNeighbours())
@@ -723,7 +726,6 @@ Poses_DestFirst getNearest_Enemy_CellPosToMove(MapCell* curCell)
 Poses_DestFirst getNearest_Noone_CellPosToMove(MapCell* curCell)
 {
     Poses_DestFirst res{};
-    // TODO: use wave-algorithm with depth 5-7
 
     // Depth 1
     for (auto cell : curCell->getCellNeighbours())
@@ -1162,46 +1164,9 @@ protected:
     virtual void OnRecyclerPart()
     {
         DBG_MSG_STR("#### OnRecyclerPart start");
-        if (!rTop_Pos.isValid)
-        {
-            int i;
-            for (i = 1; i < rTop_Route.size(); ++i)
-                if (rTop_Route[i].y != rTop_Route[i-1].y)
-                    break;
 
-            DBG_MSG_ARR_V(rTop_Route);
-            if (i == rTop_Route.size())
-            {
-                recyclers.emplace_back(rTop_Route[rTop_Route.size()-2]);
-            }
-            else
-            {
-                rTop_Route.erase(rTop_Route.begin(), rTop_Route.begin() + i - 1);
-
-                auto v = GetBestRecyclersToEliminateRoute(rTop_Route, false, 1);
-                recyclers.insert(recyclers.end(), v.begin(), v.end());
-            }
-        }
-        if (!rBot_Pos.isValid)
-        {
-            int i;
-            for (i = 1; i < rBot_Route.size(); ++i)
-                if (rBot_Route[i].y != rBot_Route[i-1].y)
-                    break;
-
-            DBG_MSG_ARR_V(rBot_Route);
-            if (i == rBot_Route.size())
-            {
-                recyclers.emplace_back(rBot_Route[rBot_Route.size()-2]);
-            }
-            else
-            {
-                rBot_Route.erase(rBot_Route.begin(), rBot_Route.begin() + i - 1);
-
-                auto v = GetBestRecyclersToEliminateRoute(rBot_Route, true, 1);
-                recyclers.insert(recyclers.end(), v.begin(), v.end());
-            }
-        }
+        // Sort to extract far recyclers first
+        std::sort(recyclers.begin(), recyclers.end(), [](Pos lhd, Pos rhd) { return GInf.bOppRight ? lhd.x > rhd.x : lhd.x < rhd.x; });
 
         auto canBuildRec = [](const Pos& p) { auto pCell = &GInf.getCell(p); return pCell->isMy() && pCell->units == 0 && !pCell->recycler && !pCell->recyclerNextStep; };
         auto it = std::find_if(recyclers.begin(), recyclers.end(), canBuildRec);
@@ -1212,32 +1177,16 @@ protected:
             break;
         }
 
+        // Defence my cells
         for (auto pCell : GInf.myCells)
         {
             int numEnemies = getEnemyNeighboursCount_D1(pCell);
-            if (numEnemies && !getMyNeighboursCount(pCell))
-                command.AddBuildRec(pCell->p);
+            if (!pCell->recycler && !pCell->recyclerNextStep && pCell->can_build)
+            {
+                if (isOnEnemySide(pCell) && !hasRecyclerNeighbours(pCell) || numEnemies > 1)
+                    command.AddBuildRec(pCell->p);
+            }
         }
-
-        //if (cellDestroyerPos.isValid)
-        /*
-        if (GInf.currentTurn >= GInf.initialDistanceToEnemy/2 - 1)
-        {
-            //Pos p = getNearestUnitToPos(GInf.myCells, bOppRight ? Pos{g_mapWidth-1, g_mapHeight/2} : Pos{g_mapWidth-1, g_mapHeight/2});
-            Pos resP = GInf.myCells[0]->p;
-            int smallestDist = GInf.initiaEstEnemyCenter.distanceTo(resP);
-
-            for (auto unit : GInf.myCells)
-                if (int dist = GInf.initiaEstEnemyCenter.distanceTo(unit->p); dist < 8 && dist < smallestDist && !unit->recycler)
-                {
-                    smallestDist = dist;
-                    resP = unit->p;
-                }
-            
-            if (resP != GInf.myCells[0]->p)
-                command.AddBuildRec(resP);
-        }
-        */
     }
     virtual void OnSpawnPart()
     {
@@ -1252,39 +1201,25 @@ protected:
         if (bAllRecyclersFinishedWork)
             bNeedToProtectRoute = false;
 
-        // Route protection logic - just spawn units to prevent invade
-        /*
-        if (bNeedToProtectRoute)
-        {
-            for (const auto& route : {rTop_Route, rBot_Route})
-                for (auto p : route)
-                {
-                    auto pCell = &GInf.getCell(p);
-                    if (int enemies = getEnemyNeighboursCount_D1(pCell); enemies > pCell->units && !pCell->recycler && !pCell->recyclerNextStep && !willCellTurnToGrass(pCell))
-                    {
-                        command.AddSpawn(enemies - pCell->units, pCell->p, __LINE__);
-                    }
-                }
-        }
-        */
-
         if (GInf.my_matter >= 10)
         {
             std::vector<Pos> alreadySwawned;
             for (auto p : rTop_Route)
             {
-                if (GInf.isMyValid(p) && hasEnemyNeighbours(&GInf.getCell(p)))
+                auto pCell = &GInf.getCell(p);
+                if (GInf.isMyValid(p) && hasEnemyNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
                 {
-                    command.AddSpawn(getEnemyNeighboursCount_D1(&GInf.getCell(p)), p, __LINE__);
+                    command.AddSpawn(getEnemyNeighboursCount_D1(pCell), p, __LINE__);
                     alreadySwawned.emplace_back(p);
                 }
             }
             
             for (auto p : rBot_Route)
             {
-                if (GInf.isMyValid(p) && hasEnemyNeighbours(&GInf.getCell(p)))
+                auto pCell = &GInf.getCell(p);
+                if (GInf.isMyValid(p) && hasEnemyNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
                 {
-                    command.AddSpawn(getEnemyNeighboursCount_D1(&GInf.getCell(p)), p, __LINE__);
+                    command.AddSpawn(getEnemyNeighboursCount_D1(pCell), p, __LINE__);
                     alreadySwawned.emplace_back(p);
                 }
             }
@@ -1358,70 +1293,54 @@ protected:
 
             if (numUnitsToMove > 0)
             {
-                /*
-                if (GInf.enemyRecycleNum > 4)
-                {
-                    // Escape
-                    //Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, cell_to_move->p);
-                    if (bOppRight)
-                        command.AddMove(numUnitsToMove, cell_to_move->p, Pos{g_mapWidth-1, g_mapHeight-1, true}, __LINE__);
-                    else
-                        command.AddMove(numUnitsToMove, cell_to_move->p, Pos{0, g_mapHeight-1, true}, __LINE__);
+                Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, cell_to_move->p);
+                Pos enemySubMyPos = nearestEnemyPos - cell_to_move->p;
 
-                }
-                */
-                {
-                    Pos nearestEnemyPos = getNearestUnitToPos(GInf.enemyCUnits, cell_to_move->p);
-                    Pos enemySubMyPos = nearestEnemyPos - cell_to_move->p;
+                auto nearEnemyCell_toMove = getNearest_Enemy_CellPosToMove(cell_to_move); 
+                auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move); 
 
-                    auto nearEnemyCell_toMove = getNearest_Enemy_CellPosToMove(cell_to_move); 
-                    auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move); 
+                // isOnEnemySide(cell_to_move)
+                if (cell_to_move->units > 1 && getEnemyNeighboursCount_D1(cell_to_move) == 0)
+                {
+                    for (auto pCell : cell_to_move->getCellNeighbours())
+                        if (pCell->isNobodys() && numUnitsToMove > 0)
+                        {
+                            --numUnitsToMove;
+                            command.AddMove(1, cell_to_move->p, pCell->p, __LINE__);
+                        }
                     
-
-                    if (cell_to_move->p.distanceTo(nearestEnemyPos) == 1)
-                    {
-                        numUnitsToMove = std::max(numUnitsToMove - getEnemyNeighboursCount_D1(cell_to_move), 0);
-                        command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
-                    }
-                    else if (std::abs(enemySubMyPos.x) == 1 && std::abs(enemySubMyPos.y) == 1) // Enemy on corner. Better to go top or bot
-                    {
-                        enemySubMyPos.x = 0;
-                        command.AddMove(numUnitsToMove, cell_to_move->p, cell_to_move->p + enemySubMyPos, __LINE__);
-                    }
-                    else if (cell_to_move->p.distanceTo(nearestEnemyPos) > 5 && isOnEnemySide(cell_to_move) &&
-                            (nearEnemyCell_toMove.pDest.isValid || nearEnemyNooneCell_toMove.pDest.isValid)) // Enemy on corner. Better to go top or bot
-                    {
-                        if (nearEnemyCell_toMove.pDest.isValid) command.AddMove(numUnitsToMove, cell_to_move->p, nearEnemyCell_toMove.firstToMove, __LINE__);
-                        else                                    command.AddMove(numUnitsToMove, cell_to_move->p, nearEnemyNooneCell_toMove.firstToMove, __LINE__);
-                    }
-                    else
-                        command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
+                    for (auto pCell : cell_to_move->getCellNeighbours())
+                        if (pCell->isEnemy() && numUnitsToMove > 0)
+                        {
+                            --numUnitsToMove;
+                            command.AddMove(1, cell_to_move->p, pCell->p, __LINE__);
+                        }
                 }
+                else if (cell_to_move->p.distanceTo(nearestEnemyPos) == 1)
+                {
+                    numUnitsToMove = std::max(numUnitsToMove - getEnemyNeighboursCount_D1(cell_to_move), 0);
+                    command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
+                }
+                else if (Pos cornerP = Pos{cell_to_move->p.y + enemySubMyPos.y, cell_to_move->p.x};
+                            std::abs(enemySubMyPos.x) == 1 && std::abs(enemySubMyPos.y) == 1 && // Enemy on corner and corner cell valid and not a recycler. Better to go top or bot
+                            GInf.isValid(cornerP) && !GInf.getCell(cornerP).recycler && !GInf.getCell(cornerP).recyclerNextStep)
+                {
+                    enemySubMyPos.x = 0;
+                    command.AddMove(numUnitsToMove, cell_to_move->p, cell_to_move->p + enemySubMyPos, __LINE__);
+                }
+                else if (cell_to_move->p.distanceTo(nearestEnemyPos) > 5 && isOnEnemySide(cell_to_move) &&
+                        (nearEnemyCell_toMove.pDest.isValid || nearEnemyNooneCell_toMove.pDest.isValid)) // Enemy on corner. Better to go top or bot
+                {
+                    if (nearEnemyCell_toMove.pDest.isValid) command.AddMove(numUnitsToMove, cell_to_move->p, nearEnemyCell_toMove.firstToMove, __LINE__);
+                    else                                    command.AddMove(numUnitsToMove, cell_to_move->p, nearEnemyNooneCell_toMove.firstToMove, __LINE__);
+                }
+                else
+                    command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
             }
         }
     }
     virtual void OnSpecialUnitsPart()
     {
-        // Process moving by route
-        /*
-        if (GInf.currentTurn < rTop_Route.size())
-        {
-            auto rTop_Cell = &GInf.getCell(rTop_Pos);
-            command.AddMove(rTop_Cell->units, rTop_Cell->p, rTop_Route[GInf.currentTurn], __LINE__); rTop_Pos = rTop_Route[GInf.currentTurn];
-        }
-        else
-            rTop_Pos.invalidate();
-        
-        if (GInf.currentTurn < rBot_Route.size())
-        {
-            auto rBot_Cell = &GInf.getCell(rBot_Pos);
-            command.AddMove(rBot_Cell->units, rBot_Cell->p, rBot_Route[GInf.currentTurn], __LINE__); rBot_Pos = rBot_Route[GInf.currentTurn];
-        }
-        else
-            rBot_Pos.invalidate();
-        */
-        
-        
         // Process moving by route
         if (rTop_NextStep.isValid)
         {
@@ -1435,57 +1354,6 @@ protected:
             command.AddMove(1, rBot_Cell->p, rBot_NextStep, __LINE__);
             rBot_Pos = rBot_NextStep;
         }
-/*
-        // CellDestroyer
-        if (!cellDestroyerPos.isValid && GInf.my_matter >= 10)
-        {
-            //cellDestroyerPos = getMyUnitNearestToEnemyPos();
-            //DBG_MSG_V("Select unit as cell destroyer:", cellDestroyerPos);
-        }
-        else if (cellDestroyerPos.isValid && !cellDestroyerTarget.isValid)
-        {
-            if (bOppRight)
-            {
-                if (GInf.currentTurn == 0)
-                {
-                    for (int i = g_mapWidth - 1; i >= 0; --i)
-                        if (const auto& cell = GInf.map[cellDestroyerPos.y][i]; cell.isValid() && !cell.recycler && !cell.recyclerNextStep) { cellDestroyerTarget = cell.p; break; }
-                }
-                else
-                {
-                    for (int i = g_mapWidth - 5; i >= 0; --i)
-                        if (const auto& cell = GInf.map[g_mapHeight-1][i]; cell.isValid() && !cell.recycler && !cell.recyclerNextStep) { cellDestroyerTarget = cell.p; break; }
-                }
-            }
-            else
-            {
-                if (GInf.currentTurn == 0)
-                {
-                    for (int i = 0; i < g_mapWidth; ++i)
-                        if (const auto& cell = GInf.map[cellDestroyerPos.y][i]; cell.isValid() && !cell.recycler && !cell.recyclerNextStep) { cellDestroyerTarget = cell.p; break; }
-                }
-                else
-                {
-                    for (int i = 5; i < g_mapWidth; ++i)
-                        if (const auto& cell = GInf.map[g_mapHeight-1][i]; cell.isValid() && !cell.recycler && !cell.recyclerNextStep) { cellDestroyerTarget = cell.p; break; }
-                }
-            }
-            DBG_V(cellDestroyerTarget);
-        }
-        if (cellDestroyerPos.isValid && cellDestroyerTarget.isValid)
-        {
-            auto myCellDestroyer = &GInf.getCell(cellDestroyerPos);
-            if (myCellDestroyer->p == cellDestroyerTarget)
-            {
-                cellDestroyerPos.invalidate();
-            }
-            else
-            {
-                //cellDestroyerTarget = pFirstStep;
-                command.AddMove(myCellDestroyer->units, myCellDestroyer->p, cellDestroyerTarget, __LINE__);
-            }
-        }
-*/
 
         // Research part from base strategy
         if (GInf.currentTurn >= 5 + GInf.initialDistanceToEnemy)
@@ -1528,7 +1396,6 @@ private:
     void LaunchWaveAlgorithm(int y, int x, std::vector<std::vector<int>> *map, int depth, int extYLimit, bool bMy, Dir FirstDir)
     {
         WA_map = map; WA_depth = depth; WA_extYLimit = extYLimit; WA_bMy = bMy; WA_FirstDir = FirstDir;
-        //DBG_MSG_v2("LaunchWaveAlgorithm_rec", y, x);
         LaunchWaveAlgorithm_rec(y, x, 0);
     }
 
@@ -1637,13 +1504,12 @@ private:
 
                 Pos p1 = bEnemyBottom ? c->getBottom() : c->getTop();
                 Pos p2 = bOppRight    ? c->getRight()  : c->getLeft();
-                //DBG_V3(c->p, p1, p2);
+
                 // cell valid and not in my route
                 if (GInf.isValid(p1) && std::count(route.begin(), route.end(), p1) == 0 ||
                     GInf.isValid(p2) && std::count(route.begin(), route.end(), p2) == 0)
                     cellsToProtect.emplace_back(route[i]);
             }
-            //DBG_MSG_ARR_V(cellsToProtect);
 
             int curLen = 0;
             for (int i = 0; i < cellsToProtect.size(); ++i)
@@ -1651,13 +1517,11 @@ private:
                 auto p = cellsToProtect[i];
                 if (curLen == 1 && p.distanceTo(cellsToProtect[i-1]) != 1) // new cell is far from previous. Add recycler
                 {
-                    //DBG_MSG_V3("recyclers C1: ", i, curLen, p);
                     recyclers.emplace_back(cellsToProtect[i-1]);
                     curLen = 0;
                 }
                 else if (curLen == 2)
                 {
-                    //DBG_MSG_V3("recyclers C2: {i, curLen, p} ", i, curLen, p);
                     int profit1 = GInf.getCell(cellsToProtect[i-2]).getRecyclerProfit();
                     int profit2 = GInf.getCell(cellsToProtect[i-1]).getRecyclerProfit();
                     int profit3 = GInf.getCell(cellsToProtect[i-0]).getRecyclerProfit();
@@ -1671,7 +1535,6 @@ private:
 
                 if (i == cellsToProtect.size() - 1)
                 {
-                    //DBG_MSG_V3("recyclers C4: {i, curLen, p} ", i, curLen, p);
                     if (curLen == 0) recyclers.emplace_back(cellsToProtect.back()); // previous cells already processed. Need to proceed only this one
                     else
                     {
@@ -1702,8 +1565,6 @@ private:
             DBG_V(myP);
             DBG_V(enemyP);
 
-            //std::vector<MapCell*> nearestEnemies = getN_NearestUnitToPos(GInf.enemyCUnits, bTopRobot ? Pos{rTop_Pos.x, 0} : Pos{rBot_Pos.x, g_mapHeight-1}, 2);
-            //for (auto pEnemyCell : nearestEnemies)
             for (auto pEnemyCell : GInf.enemyCUnits)
             {
                 LaunchWaveAlgorithm(pEnemyCell->p.y, pEnemyCell->p.x, &map, 20, extYLim, false, bTopRobot ? Dir::TOP : Dir::BOT); // Enemy first estimation
@@ -1721,10 +1582,12 @@ private:
             // Determine target
             DBG_V(GInf.bAsymmetricMap);
             Pos targetP{};
+            
+            auto isMyCell = [&map](int x, int y) { return map[y][x] != GInf.WA_INVALID && map[y][x] < GInf.WA_ENEMY; };
             if (!GInf.bAsymmetricMap)
             {
                 std::vector<int> targetYToCheck{};
-                targetYToCheck.resize(g_mapHeight-1);
+                targetYToCheck.resize(g_mapHeight);
                 //if (bTopRobot) targetYToCheck = { 0, 1, 2, 3 };
                 //else           targetYToCheck = { (int)map.size() - 1, (int)map.size() - 2 };
                 if (bTopRobot) std::iota(targetYToCheck.begin(), targetYToCheck.end(), 0);
@@ -1735,11 +1598,29 @@ private:
                     for (int y : targetYToCheck)
                     {
                         int x = 0;
+                        bool bFound = false;
                         for (; x < map[y].size() - 2; ++x)
-                            if (map[y][x] != GInf.WA_INVALID && map[y][x] < GInf.WA_ENEMY && map[y][x+1] >= GInf.WA_ENEMY)
+                            if (isMyCell(x, y) && map[y][x+1] >= GInf.WA_ENEMY)
+                            {
+                                bFound = true;
                                 break;
+                            }
 
-                        if (x != map[y].size() - 2)
+                        DBG_V2(x, y);
+                        // Maybe no enemies?
+                        if (!bFound)
+                        {
+                            for (x = map[y].size() - 1; x >= 0; --x)
+                                if (map[y][x] != GInf.WA_INVALID)
+                                {
+                                    break;
+                                }
+                            if (isMyCell(x, y))
+                                bFound = true;
+
+                        }
+
+                        if (bFound)
                         {
                             //if (y != 0 map[y][x])
                             //targetP = Pos{ x - 1, y, true };
@@ -1753,11 +1634,28 @@ private:
                     for (int y : targetYToCheck)
                     {
                         int x = map[y].size() - 2;
+                        bool bFound = false;
                         for (; x > 0; --x)
-                            if (map[y][x] != GInf.WA_INVALID && map[y][x] < GInf.WA_ENEMY && map[y][x-1] >= GInf.WA_ENEMY)
+                            if (isMyCell(x, y) && map[y][x-1] >= GInf.WA_ENEMY)
+                            {
+                                bFound = true;
                                 break;
+                            }
 
-                        if (x != 0)
+                        // Maybe no enemies?
+                        if (!bFound)
+                        {
+                            for (x = 0; x < map[y].size() ; ++x)
+                                if (map[y][x] != GInf.WA_INVALID)
+                                {
+                                    break;
+                                }
+                            if (isMyCell(x, y))
+                                bFound = true;
+
+                        }
+
+                        if (bFound)
                         {
                             //targetP = Pos{ x + 1, y, true };
                             targetP = Pos{ x, y, true };
@@ -1772,11 +1670,11 @@ private:
                 xToIterate.resize((int)map[0].size()-1);
                 yToIterate.resize((int)map.size());
 
-                if (bOppRight) std::iota(std::rbegin(xToIterate), std::rend(xToIterate), 0);
-                else           std::iota(std::begin(xToIterate),  std::end(xToIterate),  0);
+                if (bOppRight) std::iota(std::begin(xToIterate),  std::end(xToIterate), 0);   // 0, 1, 2
+                else           std::iota(std::rbegin(xToIterate), std::rend(xToIterate),  0); // 9, 8, 7
                 
-                if (bTopRobot) std::iota(std::begin(yToIterate), std::end(yToIterate), 0);
-                else           std::iota(std::rbegin(yToIterate),  std::rend(yToIterate),  0);
+                if (bTopRobot) std::iota(std::begin(yToIterate), std::end(yToIterate), 0);     // 0, 1, 2
+                else           std::iota(std::rbegin(yToIterate),  std::rend(yToIterate),  0); // 9, 8, 7
 
                 DBG_MSG_ARR_V(xToIterate);
                 DBG_MSG_ARR_V(yToIterate);
@@ -1792,6 +1690,21 @@ private:
                                 break;
                             }
                         }
+                    
+                    // Maybe no enemies?
+                    if (!bFound)
+                    {
+                        auto itX = xToIterate.rbegin();
+                        for (; itX != xToIterate.rend(); ++itX)
+                                if (map[y][*itX] != GInf.WA_INVALID)
+                                {
+                                    targetP = Pos{ *itX, y, true };
+                                    break;
+                                }
+                        if (isMyCell(*itX, y))
+                            bFound = true;
+
+                    }
 
                     if (bFound) break;
                 }
@@ -1800,26 +1713,23 @@ private:
 
             DBG_MSG_V("Reseacher targets: ", targetP);
         
-            if (!targetP.isValid)
+            if (!targetP.isValid || !isMyCell(targetP.x, targetP.y))
             {
-                DBG_MSG_STR("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Failed to initialize Butterfly strategy. Can't calculate  reseacher targets");
+                DBG_MSG_STR("!!!!!!!!!!!!!!! Failed to initialize Butterfly strategy. Can't calculate  reseacher targets. Terminate algorithm");
                 return{};
             }
 
-            /*
-            Pos newPosToCheck = bTopRobot ? Pos{targetP.x, 0, true} : Pos{targetP.x, g_mapHeight-1, true};
-            Pos targetP_Orig = targetP;
-            if (!bAsymmetricMap && targetP.y != 0 && GInf.isValid(newPosToCheck)) targetP = newPosToCheck;
+            // Robot tried to go to the previous cell in the route. Terminate algorithm
+            for (auto p : (bTopRobot ? rTop_Route : rBot_Route))
+                if (targetP == p)
+                {
+                    DBG_MSG_STR("!!!!!!!!!!!!!!! New butterfly wing target already in the route. Terminate algorithm");
+                    return{};
+                }
 
             // Build route to targets
             auto route = BuildRouteFromWave(map, myP, targetP, bOppRight ? Dir::RIGHT : Dir::LEFT);
-            targetP = targetP_Orig;
-            */
-            // Build route to targets
-            auto route = BuildRouteFromWave(map, myP, targetP, bOppRight ? Dir::RIGHT : Dir::LEFT);
 
-            // Find best positions for recyclers
-            //recyclers.clear();
             return !route.empty() ? route[0] : Pos{};
         }
         
@@ -1830,16 +1740,6 @@ private:
     bool bNeedToProtectRoute = true;
 
     // Reseachers
-    /*
-    struct Reseacher
-    {
-        Pos p{};
-        Pos nextStep{};
-        std::vector<Pos> route{};
-
-        Pos initP{};
-    };
-    */
     Pos rTop_Pos{ INT32_MAX, INT32_MAX };
     Pos rBot_Pos{ -1, -1 };
     Pos rTop_initPos{ INT32_MAX, INT32_MAX };
