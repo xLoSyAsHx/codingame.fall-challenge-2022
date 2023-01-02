@@ -1748,7 +1748,7 @@ private:
             {
                 std::vector<int> xToIterate{}, yToIterate{};
                 xToIterate.resize((int)map[0].size()-1);
-                yToIterate.resize((int)map.size()/2);
+                yToIterate.resize((int)map.size());
 
                 if (bOppRight) std::iota(std::rbegin(xToIterate), std::rend(xToIterate), 0);
                 else           std::iota(std::begin(xToIterate),  std::end(xToIterate),  0);
@@ -1758,15 +1758,19 @@ private:
 
                 DBG_MSG_ARR_V(xToIterate);
                 DBG_MSG_ARR_V(yToIterate);
-                for (int x : xToIterate)
+                for (int y : yToIterate)
                 {
+                            std::cerr << std::endl << "y == " << y << "; iterate val x: ";
                     bool bFound = false;
-                    for (int y : yToIterate)
-                        if (map[y][x] > 0 && map[y][x] < GInf.WA_ENEMY && ((bOppRight ? map[y][x+1] : map[y][x-1]) >= GInf.WA_ENEMY))
+                    for (int x : xToIterate)
                         {
-                            targetP = Pos{ x, y, true };
-                            bFound = true;
-                            break;
+                            std::cerr << " " << x;
+                            if (map[y][x] > 0 && map[y][x] < GInf.WA_ENEMY && ((bOppRight ? map[y][x+1] : map[y][x-1]) >= GInf.WA_ENEMY))
+                            {
+                                targetP = Pos{ x, y, true };
+                                bFound = true;
+                                break;
+                            }
                         }
 
                     if (bFound) break;
