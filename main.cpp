@@ -128,7 +128,11 @@ struct MapCell {
         if (recycleProfit == -1)
         {
             std::vector<MapCell*> n = getCellNeighbours();
-            recycleProfit = std::accumulate(n.begin(), n.end(), scrap_amount, [](int acc, MapCell* rhd) { return acc + rhd->scrap_amount; });
+            recycleProfit = scrap_amount;
+            for (auto neighbour : n)
+            {
+                recycleProfit += std::min(scrap_amount, neighbour->scrap_amount);
+            }
         }
         return recycleProfit;
     }
@@ -393,6 +397,28 @@ bool isOnEnemySide(MapCell* cell)
 {
     if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2;
     else                return cell->p.x < g_mapWidth/2;
+}
+
+bool hasEnemyNCelleighbours(MapCell* cell)
+{
+    for (auto neighbour : cell->getCellNeighbours())
+    {
+        if (neighbour->isEnemy())
+            return true;
+    }
+
+    return false;
+}
+
+bool hasNobodyNeighbours(MapCell* cell)
+{
+    for (auto neighbour : cell->getCellNeighbours())
+    {
+        if (neighbour->isNobodys())
+            return true;
+    }
+
+    return false;
 }
 
 bool willCellTurnToGrass(MapCell* cell)
@@ -1300,8 +1326,9 @@ protected:
                 auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move); 
 
                 // isOnEnemySide(cell_to_move)
-                if (cell_to_move->units > 1 && getEnemyNeighboursCount_D1(cell_to_move) == 0)
+                if (cell_to_move->units > 1 && getEnemyNeighboursCount_D1(cell_to_move) == 0 && (hasEnemyNCelleighbours(cell_to_move) || hasNobodyNeighbours(cell_to_move)))
                 {
+                    DBG_V3("@@@@@@@@@@@ 1", cell_to_move->p, nearEnemyNooneCell_toMove.pDest);
                     for (auto pCell : cell_to_move->getCellNeighbours())
                         if (pCell->isNobodys() && numUnitsToMove > 0)
                         {
