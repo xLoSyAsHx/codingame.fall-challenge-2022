@@ -626,12 +626,13 @@ std::vector<SpawnRecomendation> findBestForSpawn()
     {
         if (int numEnemies = getEnemyUnitNeighboursCount_D2(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
+            && numEnemies > pBestForSpawnSell->units
             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
         {
             if (matter < 10)
                 break;
 
-            int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell) + 1);
+            int toSpawn = std::min(matter / 10, numEnemies - getEnemyUnitNeighboursCount_D1(pBestForSpawnSell));
 
             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
             matter -= toSpawn;
