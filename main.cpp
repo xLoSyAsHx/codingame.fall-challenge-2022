@@ -396,14 +396,14 @@ public:
 bool isOnEnemySide(MapCell* cell)
 {
     if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2;
-    else                return cell->p.x < g_mapWidth/2;
+    else                return cell->p.x <= g_mapWidth/2;
 }
 
-bool hasEnemyNCelleighbours(MapCell* cell)
+bool hasEnemyFreeCellNeighbours(MapCell* cell)
 {
     for (auto neighbour : cell->getCellNeighbours())
     {
-        if (neighbour->isEnemy())
+        if (neighbour->isEnemy() && ! neighbour->recycler && neighbour->units == 0)
             return true;
     }
 
@@ -444,7 +444,7 @@ bool hasRecyclerNeighbours(MapCell* pCell)
     return false;
 }
 
-bool hasEnemyNeighbours(MapCell* cell)
+bool hasEnemyUnitNeighbours(MapCell* cell)
 {
     for (auto neighbour : cell->getCellNeighbours())
     {
@@ -455,7 +455,7 @@ bool hasEnemyNeighbours(MapCell* cell)
     return false;
 }
 
-int getEnemyNeighboursCount_D1(MapCell* cell)
+int getEnemyUnitNeighboursCount_D1(MapCell* cell)
 {
     // Wave depth == 1
 
@@ -469,7 +469,7 @@ int getEnemyNeighboursCount_D1(MapCell* cell)
     return numEnemies;
 }
 
-int getEnemyNeighboursCount(MapCell* cell)
+int getEnemyUnitNeighboursCount_D2(MapCell* cell)
 {
     // Wave depth == 2
     std::vector<MapCell*> neighbours;
@@ -623,14 +623,14 @@ std::vector<SpawnRecomendation> findBestForSpawn()
    // ----- 1 -----
     for (auto pBestForSpawnSell : GInf.myCUnits)
     {
-        if (int numEnemies = getEnemyNeighboursCount(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+        if (int numEnemies = getEnemyUnitNeighboursCount_D2(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
         {
             if (matter < 10)
                 break;
 
-            int toSpawn = std::min(matter / 10, getEnemyNeighboursCount(pBestForSpawnSell) + 1);
+            int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell) + 1);
 
             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
             matter -= toSpawn;
@@ -642,14 +642,14 @@ std::vector<SpawnRecomendation> findBestForSpawn()
    // Protect my cells
     for (auto pBestForSpawnSell : GInf.myCells)
     {
-        if (int numEnemies = getEnemyNeighboursCount_D1(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+        if (int numEnemies = getEnemyUnitNeighboursCount_D1(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
         {
             if (matter < 10)
                 break;
 
-            int toSpawn = std::min(matter / 10, getEnemyNeighboursCount(pBestForSpawnSell));
+            int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell));
 
             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
             matter -= toSpawn;
@@ -862,14 +862,14 @@ protected:
         if (!GInf.isMyValid(researcherPos)) researcherPos.invalidate();
         if (!GInf.isMyValid(invaderPos))    invaderPos.invalidate();
 
-        if (researcherPos.isValid && hasEnemyNeighbours(&GInf.getCell(researcherPos)))
+        if (researcherPos.isValid && hasEnemyUnitNeighbours(&GInf.getCell(researcherPos)))
         {
             DBG_MSG_V("WARN - Researcher in dangerous - behave like normal unit", researcherPos);
             researcherPos.invalidate();
         }
 
         // TODO: If invader is important - do not remove it
-        if (invaderPos.isValid && hasEnemyNeighbours(&GInf.getCell(invaderPos)))
+        if (invaderPos.isValid && hasEnemyUnitNeighbours(&GInf.getCell(invaderPos)))
         {
             DBG_MSG_V("WARN - Invider in dangerous - behave like normal unit", invaderPos);
             invaderPos.invalidate();
@@ -1149,7 +1149,7 @@ protected:
     virtual void OnTurnStart()
     {
         if (!GInf.isMyValid(researcherPos))    researcherPos.invalidate();
-        if (researcherPos.isValid && hasEnemyNeighbours(&GInf.getCell(researcherPos)))
+        if (researcherPos.isValid && hasEnemyUnitNeighbours(&GInf.getCell(researcherPos)))
         {
             DBG_MSG_V("WARN - Researcher in dangerous - behave like normal unit", researcherPos);
             researcherPos.invalidate();
@@ -1206,7 +1206,7 @@ protected:
         // Defence my cells
         for (auto pCell : GInf.myCells)
         {
-            int numEnemies = getEnemyNeighboursCount_D1(pCell);
+            int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
             if (!pCell->recycler && !pCell->recyclerNextStep && pCell->can_build)
             {
                 if (isOnEnemySide(pCell) && !hasRecyclerNeighbours(pCell) || numEnemies > 1)
@@ -1233,9 +1233,9 @@ protected:
             for (auto p : rTop_Route)
             {
                 auto pCell = &GInf.getCell(p);
-                if (GInf.isMyValid(p) && hasEnemyNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
+                if (GInf.isMyValid(p) && hasEnemyUnitNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
                 {
-                    command.AddSpawn(getEnemyNeighboursCount_D1(pCell), p, __LINE__);
+                    command.AddSpawn(getEnemyUnitNeighboursCount_D1(pCell), p, __LINE__);
                     alreadySwawned.emplace_back(p);
                 }
             }
@@ -1243,9 +1243,9 @@ protected:
             for (auto p : rBot_Route)
             {
                 auto pCell = &GInf.getCell(p);
-                if (GInf.isMyValid(p) && hasEnemyNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
+                if (GInf.isMyValid(p) && hasEnemyUnitNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
                 {
-                    command.AddSpawn(getEnemyNeighboursCount_D1(pCell), p, __LINE__);
+                    command.AddSpawn(getEnemyUnitNeighboursCount_D1(pCell), p, __LINE__);
                     alreadySwawned.emplace_back(p);
                 }
             }
@@ -1323,12 +1323,47 @@ protected:
                 Pos enemySubMyPos = nearestEnemyPos - cell_to_move->p;
 
                 auto nearEnemyCell_toMove = getNearest_Enemy_CellPosToMove(cell_to_move); 
-                auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move); 
+                auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move);
 
-                // isOnEnemySide(cell_to_move)
-                if (cell_to_move->units > 1 && getEnemyNeighboursCount_D1(cell_to_move) == 0 && (hasEnemyNCelleighbours(cell_to_move) || hasNobodyNeighbours(cell_to_move)))
+                bool bNoEnemyUnits_D1 = getEnemyUnitNeighboursCount_D1(cell_to_move) == 0;
+                bool bCanProtectNearCell_D1 = false;
+                for (auto pCell : cell_to_move->getCellNeighbours())
+                    if (int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
+                        pCell->isMy() && numEnemies > pCell->units && numEnemies - pCell->units <= cell_to_move->units)
+                    {
+                        bCanProtectNearCell_D1 = true;
+                    }
+
+                if (bNoEnemyUnits_D1 && bCanProtectNearCell_D1)
+                {
+                    DBG_V3("@@@@@@@@@@@ 0", cell_to_move->p, nearEnemyNooneCell_toMove.pDest);
+                    int availableUnitsNum = cell_to_move->units;
+                    for (auto pCell : cell_to_move->getCellNeighbours())
+                    {
+                        int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
+                        int numUnitsToHelp = numEnemies - pCell->units;
+                        if (pCell->isMy() && numEnemies > pCell->units && availableUnitsNum)
+                        {
+                            numUnitsToHelp = std::min(numUnitsToHelp, availableUnitsNum);
+                            command.AddMove(numUnitsToHelp, cell_to_move->p, pCell->p, __LINE__);
+                            availableUnitsNum -= numUnitsToHelp;
+                        }
+                    }
+                }
+                else if (isOnEnemySide(cell_to_move) && bNoEnemyUnits_D1 &&
+                        (GInf.bOppRight ? GInf.isValid(cell_to_move->getRight()) : GInf.isValid(cell_to_move->getLeft()) ||
+                        GInf.isValid(cell_to_move->getTop()) || GInf.isValid(cell_to_move->getBottom())))
                 {
                     DBG_V3("@@@@@@@@@@@ 1", cell_to_move->p, nearEnemyNooneCell_toMove.pDest);
+                    Pos enemySideDirection = GInf.bOppRight ? cell_to_move->getRight() : cell_to_move->getLeft();
+
+                    if (GInf.isValid(enemySideDirection))          command.AddMove(cell_to_move->units, cell_to_move->p, enemySideDirection, __LINE__);
+                    else if (GInf.isValid(cell_to_move->getTop())) command.AddMove(cell_to_move->units, cell_to_move->p, cell_to_move->getTop(), __LINE__);
+                    else                                           command.AddMove(cell_to_move->units, cell_to_move->p, cell_to_move->getBottom(), __LINE__);
+                }
+                else if (cell_to_move->units > 1 && bNoEnemyUnits_D1 && (hasEnemyFreeCellNeighbours(cell_to_move) || hasNobodyNeighbours(cell_to_move)))
+                {
+                    DBG_V3("@@@@@@@@@@@ 2", cell_to_move->p, nearEnemyNooneCell_toMove.pDest);
                     for (auto pCell : cell_to_move->getCellNeighbours())
                         if (pCell->isNobodys() && numUnitsToMove > 0)
                         {
@@ -1345,7 +1380,7 @@ protected:
                 }
                 else if (cell_to_move->p.distanceTo(nearestEnemyPos) == 1)
                 {
-                    numUnitsToMove = std::max(numUnitsToMove - getEnemyNeighboursCount_D1(cell_to_move), 0);
+                    numUnitsToMove = std::max(numUnitsToMove - getEnemyUnitNeighboursCount_D1(cell_to_move), 0);
                     command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
                 }
                 else if (Pos cornerP = Pos{cell_to_move->p.y + enemySubMyPos.y, cell_to_move->p.x};
@@ -1365,6 +1400,8 @@ protected:
                     command.AddMove(numUnitsToMove, cell_to_move->p, nearestEnemyPos, __LINE__);
             }
         }
+
+        DBG_MSG_V3("#### OnMovementPart end. ", GInf.myCUnitsNum, GInf.myMovedNum, GInf.mySpawnNum);
     }
     virtual void OnSpecialUnitsPart()
     {
@@ -1586,7 +1623,7 @@ private:
         if (myP.isValid)
         {
             if ((bTopRobot && myP.y == 0 || !bTopRobot && myP.y == g_mapHeight-1)
-                && getEnemyNeighboursCount(&GInf.getCell(myP)) != 0)
+                && getEnemyUnitNeighboursCount_D2(&GInf.getCell(myP)) != 0)
                 return Pos{};
 
             DBG_V(myP);
