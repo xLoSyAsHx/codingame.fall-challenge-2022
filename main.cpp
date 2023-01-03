@@ -373,24 +373,25 @@ struct GameInfo
 std::vector<std::vector<MapCell>>& MapCell::map = GInf.map;
 
 
-class Command {
-    std::stringstream ss;
-    std::stringstream errSS;
-    bool bEmpty = true;
+ class Command {
+     std::stringstream ss;
+    std::stringstream errSS_Build, errSS_Spawn, errSS_Mpve;
+     bool bEmpty = true;
 
-public:
-    bool empty() const { return bEmpty; }
+ public:
+     bool empty() const { return bEmpty; }
 
-    void Clear()  { ss.str(""); errSS.str(""); bEmpty = true; }
-    void Submit() { std::cerr << errSS.str()<< std::endl; std::cout << ss.str() << std::endl; }
+    void Clear()  { ss.str(""); errSS_Build.str(""); errSS_Spawn.str(""); errSS_Mpve.str(""); bEmpty = true; }
+    void Submit() { std::cerr << errSS_Build.str()<< std::endl << errSS_Spawn.str()<< std::endl << errSS_Mpve.str()<< std::endl; std::cout << ss.str() << std::endl; }
 
-    void AddBuildRec(Pos p)                              { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 10; GInf.getCell(p).recyclerNextStep = 1; }
-    void AddMove(int amount, Pos from, Pos to, int line) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;
-                                                                        errSS << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " l=" << line << "; ";}
-    void AddSpawn(int amount, Pos p, int line)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
-                                                                        errSS << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << " l=" << line << "; "; }
-    void AddWait()                                       { bEmpty = false; ss << "WAIT"; }
-} command;
+    void AddBuildRec(Pos p, int l)                       { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 10; GInf.getCell(p).recyclerNextStep = 1;
+                                                                  errSS_Build << "BUILD " << p.x << ' ' << p.y << "L " << l << "; ";}
+     void AddMove(int amount, Pos from, Pos to, int line) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;
+                                                                   errSS_Mpve << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " l=" << line << "; ";}
+     void AddSpawn(int amount, Pos p, int line)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
+                                                                  errSS_Spawn << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << " l=" << line << "; "; }
+     void AddWait()                                       { bEmpty = false; ss << "WAIT"; }
+ } command;
 
 
 bool isOnEnemySide(MapCell* cell)
@@ -910,7 +911,7 @@ protected:
                 DBG_V(cell_to_build->p);
                 if (cell_to_build->can_build)
                 {
-                    command.AddBuildRec(cell_to_build->p);
+                    command.AddBuildRec(cell_to_build->p, __LINE__);
                     GInf.my_matter -= 10;
                 }
             }
@@ -1198,7 +1199,7 @@ protected:
         auto it = std::find_if(recyclers.begin(), recyclers.end(), canBuildRec);
         while (it != recyclers.end() && GInf.myRecycleNum < 2)
         {
-            command.AddBuildRec(*it);
+            command.AddBuildRec(*it, __LINE__);
             it = std::find_if(it, recyclers.end(), canBuildRec);
             break;
         }
@@ -1210,7 +1211,7 @@ protected:
             if (!pCell->recycler && !pCell->recyclerNextStep && pCell->can_build)
             {
                 if (isOnEnemySide(pCell) && !hasRecyclerNeighbours(pCell) || numEnemies > 1)
-                    command.AddBuildRec(pCell->p);
+                    command.AddBuildRec(pCell->p, __LINE__);
             }
         }
     }
