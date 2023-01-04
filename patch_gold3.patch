@@ -1,0 +1,75 @@
+diff --git a/main.cpp b/main.cpp
+index c30dfc0..99aa10a 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -478,7 +478,7 @@ int getEnemyUnitNeighboursCount_D2(MapCell* cell)
+ 
+     for (auto neighbour : cell->getCellNeighbours())
+     {
+-        if (!neighbour->isEnemyUnit())
++        if (neighbour->recycler || neighbour->recyclerNextStep)
+             continue;
+ 
+         neighbours.emplace_back(neighbour);
+@@ -620,37 +620,38 @@ std::vector<SpawnRecomendation> findBestForSpawn()
+     */
+    std::vector<SpawnRecomendation> recomendations{};
+    int matter = GInf.my_matter;
+-   
+-   // ----- 1 -----
+-    for (auto pBestForSpawnSell : GInf.myCUnits)
++    
++   // ----- 1.5 -----
++   // Protect my cells
++    for (auto pBestForSpawnSell : GInf.myCells)
+     {
+-        if (int numEnemies = getEnemyUnitNeighboursCount_D2(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
++        if (int numEnemies = getEnemyUnitNeighboursCount_D1(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
++            && numEnemies > pBestForSpawnSell->units
+             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
+         {
+             if (matter < 10)
+                 break;
+ 
+-            int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell) + 1);
++            int toSpawn = std::min(matter / 10, numEnemies - getEnemyUnitNeighboursCount_D1(pBestForSpawnSell));
+ 
+             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+             matter -= toSpawn;
+             recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
+         }
+     }
+-    
+-   // ----- 1.5 -----
+-   // Protect my cells
+-    for (auto pBestForSpawnSell : GInf.myCells)
++   
++   // ----- 1 -----
++    for (auto pBestForSpawnSell : GInf.myCUnits)
+     {
+-        if (int numEnemies = getEnemyUnitNeighboursCount_D1(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
++        if (int numEnemies = getEnemyUnitNeighboursCount_D2(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
+             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
+         {
+             if (matter < 10)
+                 break;
+ 
+-            int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell));
++            int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell) + 1);
+ 
+             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+             matter -= toSpawn;
+@@ -1192,6 +1193,11 @@ protected:
+     {
+         DBG_MSG_STR("#### OnRecyclerPart start");
+ 
++        if (GInf.currentTurn < GInf.initialDistanceToEnemy && GInf.enemyRecycleNum > GInf.myRecycleNum)
++        {
++            command.AddBuildRec(findBestRecycler().cell->p, __LINE__);
++        }
++
+         // Sort to extract far recyclers first
+         std::sort(recyclers.begin(), recyclers.end(), [](Pos lhd, Pos rhd) { return GInf.bOppRight ? lhd.x > rhd.x : lhd.x < rhd.x; });
+ 

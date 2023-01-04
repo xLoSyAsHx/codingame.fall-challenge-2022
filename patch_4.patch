@@ -1,0 +1,123 @@
+diff --git a/main.cpp b/main.cpp
+index 03a3328..9ef9892 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -66,6 +66,7 @@ struct MapCell {
+     int scrap_amount = 0;
+     int owner = 0; // 1 = me, 0 = enemy, -1 = neutral
+     int units = 0;
++    int unitsNextStep = 0;
+     int recycler = 0;
+     bool recyclerNextStep = 0;
+ 
+@@ -382,22 +383,50 @@ std::vector<std::vector<MapCell>>& MapCell::map = GInf.map;
+      bool empty() const { return bEmpty; }
+ 
+     void Clear()  { ss.str(""); errSS_Build.str(""); errSS_Spawn.str(""); errSS_Mpve.str(""); bEmpty = true; }
+-    void Submit() { std::cerr << errSS_Build.str()<< std::endl << errSS_Spawn.str()<< std::endl << errSS_Mpve.str()<< std::endl; std::cout << ss.str() << std::endl; }
+-
+-    void AddBuildRec(Pos p, int l)                       { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 10; GInf.getCell(p).recyclerNextStep = 1;
+-                                                                  errSS_Build << "BUILD " << p.x << ' ' << p.y << "L " << l << "; ";}
+-     void AddMove(int amount, Pos from, Pos to, int line) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;
+-                                                                   errSS_Mpve << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " l=" << line << "; ";}
+-     void AddSpawn(int amount, Pos p, int line)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
+-                                                                  errSS_Spawn << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << " l=" << line << "; "; }
+-     void AddWait()                                       { bEmpty = false; ss << "WAIT"; }
++    void Submit()
++    {
++        std::cerr << errSS_Build.str() << std::endl << errSS_Spawn.str() << std::endl << errSS_Mpve.str() << std::endl;
++        std::cout << ss.str() << std::endl;
++    }
++
++    void AddBuildRec(Pos p, int l)
++    {
++        bEmpty = false;
++        ss          << "BUILD " << p.x << ' ' << p.y << ';';
++        errSS_Build << "BUILD " << p.x << ' ' << p.y << "L " << l << "; ";
++        GInf.my_matter -= 10; GInf.getCell(p).recyclerNextStep = 1;
++    }
++
++     void AddMove(int amount, Pos from, Pos to, int line)
++     {
++        bEmpty = false;
++        ss         << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';';
++        errSS_Mpve << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " L= " << line << "; ";
++        GInf.myMovedNum += amount;
++    }
++
++     void AddSpawn(int amount, Pos p, int line)
++     {
++        bEmpty = false;
++        ss          << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';
++        errSS_Spawn << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << "L= " << line << "; ";
++
++        GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
++        GInf.getCell(p).unitsNextStep += amount;
++    }
++
++     void AddWait()
++     {
++        bEmpty = false;
++        ss << "WAIT";
++    }
+  } command;
+ 
+ 
+ bool isOnEnemySide(MapCell* cell)
+ {
+     if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2;
+-    else                return cell->p.x <= g_mapWidth/2;
++    else                return cell->p.x <  g_mapWidth/2;
+ }
+ 
+ bool hasEnemyFreeCellNeighbours(MapCell* cell)
+@@ -478,7 +507,7 @@ int getEnemyUnitNeighboursCount_D2(MapCell* cell)
+ 
+     for (auto neighbour : cell->getCellNeighbours())
+     {
+-        if (!neighbour->isEnemyUnit())
++        if (neighbour->recycler || neighbour->recyclerNextStep)
+             continue;
+ 
+         neighbours.emplace_back(neighbour);
+@@ -626,16 +655,16 @@ std::vector<SpawnRecomendation> findBestForSpawn()
+     {
+         if (int numEnemies = getEnemyUnitNeighboursCount_D2(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
+-            && numEnemies > pBestForSpawnSell->units
++            && numEnemies >= pBestForSpawnSell->units
+             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
+         {
+             if (matter < 10)
+                 break;
+ 
+-            int toSpawn = std::min(matter / 10, numEnemies - getEnemyUnitNeighboursCount_D1(pBestForSpawnSell));
++            int toSpawn = std::min(matter / 10, numEnemies - getEnemyUnitNeighboursCount_D1(pBestForSpawnSell) + 1);
+ 
+             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+-            matter -= toSpawn;
++            matter -= toSpawn * 10;
+             recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
+         }
+     }
+@@ -654,7 +683,7 @@ std::vector<SpawnRecomendation> findBestForSpawn()
+             int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell));
+ 
+             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+-            matter -= toSpawn;
++            matter -= toSpawn* 10;
+             recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
+         }
+     }
+@@ -1193,6 +1222,11 @@ protected:
+     {
+         DBG_MSG_STR("#### OnRecyclerPart start");
+ 
++        if (GInf.currentTurn < GInf.initialDistanceToEnemy && GInf.enemyRecycleNum > GInf.myRecycleNum && GInf.myRecycleNum < 3)
++        {
++            command.AddBuildRec(findBestRecycler().cell->p, __LINE__);
++        }
++
+         // Sort to extract far recyclers first
+         std::sort(recyclers.begin(), recyclers.end(), [](Pos lhd, Pos rhd) { return GInf.bOppRight ? lhd.x > rhd.x : lhd.x < rhd.x; });
+ 

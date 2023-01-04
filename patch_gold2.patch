@@ -1,0 +1,143 @@
+diff --git a/main.cpp b/main.cpp
+index 6b228a9..75ff333 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -128,7 +128,11 @@ struct MapCell {
+         if (recycleProfit == -1)
+         {
+             std::vector<MapCell*> n = getCellNeighbours();
+-            recycleProfit = std::accumulate(n.begin(), n.end(), scrap_amount, [](int acc, MapCell* rhd) { return acc + rhd->scrap_amount; });
++            recycleProfit = scrap_amount;
++            for (auto neighbour : n)
++            {
++                recycleProfit += std::min(scrap_amount, neighbour->scrap_amount);
++            }
+         }
+         return recycleProfit;
+     }
+@@ -339,7 +343,7 @@ struct GameInfo
+         for (auto el : toRemove)
+         {
+             DBG_MSG_STR("TO DELETE:");
+-            DBG_V(el);
++            DBG_V(el->p);
+             enemyCUnits.erase(std::find(enemyCUnits.begin(), enemyCUnits.end(), el));
+         }
+ 
+@@ -357,7 +361,7 @@ struct GameInfo
+         for (auto el : myToRemove)
+         {
+             DBG_MSG_STR("TO DELETE MY:");
+-            DBG_V(el);
++            DBG_V(el->p);
+             myCells.erase(std::find(myCells.begin(), myCells.end(), el));
+         }
+ 
+@@ -394,6 +398,11 @@ bool isOnEnemySide(MapCell* cell)
+     if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2;
+     else                return cell->p.x < g_mapWidth/2;
+ }
++bool isAlmostOnEnemySide(MapCell* cell)
++{
++    if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2 - 1;
++    else                return cell->p.x < g_mapWidth/2  + 1;
++}
+ 
+ bool willCellTurnToGrass(MapCell* cell)
+ {
+@@ -428,6 +437,27 @@ bool hasEnemyNeighbours(MapCell* cell)
+ 
+     return false;
+ }
++bool hasEnemyNCelleighbours(MapCell* cell)
++{
++    for (auto neighbour : cell->getCellNeighbours())
++    {
++        if (neighbour->isEnemy())
++            return true;
++    }
++
++    return false;
++}
++
++bool hasNobodyNeighbours(MapCell* cell)
++{
++    for (auto neighbour : cell->getCellNeighbours())
++    {
++        if (neighbour->isNobodys())
++            return true;
++    }
++
++    return false;
++}
+ 
+ int getEnemyNeighboursCount_D1(MapCell* cell)
+ {
+@@ -451,16 +481,14 @@ int getEnemyNeighboursCount(MapCell* cell)
+ 
+     for (auto neighbour : cell->getCellNeighbours())
+     {
+-        if (!neighbour->isEnemyUnit())
++        if (neighbour->isMyUnit() || neighbour->recycler || neighbour->recyclerNextStep)
+             continue;
+ 
+         neighbours.emplace_back(neighbour);
+         for (auto neighbour2 : neighbour->getCellNeighbours())
+         {
+-            if (!neighbour2->isEnemyUnit())
+-                continue;
+-
+-            neighbours.emplace_back(neighbour2);
++            if (neighbour2->isEnemyUnit())
++                neighbours.emplace_back(neighbour2);
+         }
+     }
+ 
+@@ -710,7 +738,10 @@ Poses_DestFirst getNearest_Enemy_CellPosToMove(MapCell* curCell)
+     // Depth 2
+     for (auto cell : curCell->getCellNeighbours())
+     {
++        if (cell->recycler || cell->recyclerNextStep)
++            continue;
+         res.firstToMove = cell->p;
++
+         for (auto cell2 : cell->getCellNeighbours())
+         {
+             if (cell2->isEnemy() && !cell2->recycler && !cell2->recyclerNextStep)
+@@ -740,6 +771,9 @@ Poses_DestFirst getNearest_Noone_CellPosToMove(MapCell* curCell)
+     // Depth 2
+     for (auto cell : curCell->getCellNeighbours())
+     {
++        if (cell->recycler || cell->recyclerNextStep)
++            continue;
++
+         res.firstToMove = cell->p;
+         for (auto cell2 : cell->getCellNeighbours())
+         {
+@@ -1204,6 +1238,7 @@ protected:
+         if (GInf.my_matter >= 10)
+         {
+             std::vector<Pos> alreadySwawned;
++            /*
+             for (auto p : rTop_Route)
+             {
+                 auto pCell = &GInf.getCell(p);
+@@ -1223,6 +1258,7 @@ protected:
+                     alreadySwawned.emplace_back(p);
+                 }
+             }
++            */
+ 
+             for (auto& spawnRec : findBestForSpawn())
+                 if (spawnRec.p.isValid && std::find(alreadySwawned.begin(), alreadySwawned.end(), spawnRec.p) == alreadySwawned.end())
+@@ -1300,8 +1336,9 @@ protected:
+                 auto nearEnemyNooneCell_toMove = getNearest_EnemyOrNoone_CellPosToMove(cell_to_move); 
+ 
+                 // isOnEnemySide(cell_to_move)
+-                if (cell_to_move->units > 1 && getEnemyNeighboursCount_D1(cell_to_move) == 0)
++                if (cell_to_move->units > 1 && getEnemyNeighboursCount_D1(cell_to_move) == 0 && (hasEnemyNCelleighbours(cell_to_move) || hasNobodyNeighbours(cell_to_move)))
+                 {
++                    DBG_V3("@@@@@@@@@@@ 1", cell_to_move->p, nearEnemyNooneCell_toMove.pDest);
+                     for (auto pCell : cell_to_move->getCellNeighbours())
+                         if (pCell->isNobodys() && numUnitsToMove > 0)
+                         {

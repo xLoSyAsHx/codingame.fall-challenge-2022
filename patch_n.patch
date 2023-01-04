@@ -1,0 +1,130 @@
+diff --git a/main.cpp b/main.cpp
+index 24992bf..6057e0f 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -189,6 +189,12 @@ struct GameInfo
+     int enemyCUnitsNum = 0;
+     int enemyRecycleNum = 0;
+ 
++    
++    int myTotalBuildedRecycleNum = 0;
++    std::vector<Pos> myTotalBuildedRecycles;
++    int enemyTotalBuildedRecycleNum = 0;
++    std::vector<Pos> enemyTotalBuildedRecycles;
++
+     int myRecycleNum = 0;
+     int mySpawnNum = 0;
+     int myMovedNum = 0;
+@@ -247,6 +253,11 @@ struct GameInfo
+                     if (pCell->recycler)
+                     {
+                         myRecycleNum += 1;
++                        if (std::count(myTotalBuildedRecycles.begin(), myTotalBuildedRecycles.end(), pCell->p) == 0)
++                        {
++                            ++myTotalBuildedRecycleNum;
++                            myTotalBuildedRecycles.emplace_back(pCell->p);
++                        }
+                     }
+                 }
+                 else if (pCell->isEnemy())
+@@ -259,7 +270,14 @@ struct GameInfo
+                     }
+ 
+                     if (pCell->recycler)
++                    {
+                         enemyRecycleNum += 1;
++                        if (std::count(enemyTotalBuildedRecycles.begin(), enemyTotalBuildedRecycles.end(), pCell->p) == 0)
++                        {
++                            ++enemyTotalBuildedRecycleNum;
++                            enemyTotalBuildedRecycles.emplace_back(pCell->p);
++                        }
++                    }
+                 }
+ 
+                 WAmap[i][j] = pCell->recycler || pCell->scrap_amount == 0 ? WA_INVALID : WA_NOT_PROCESSED;
+@@ -611,7 +629,15 @@ ProfitCell findBestRecycler()
+     for (auto cell : GInf.myCells)
+     {
+         if (!cell->hasUnitsRec())
+-            uniquePoses.emplace_back(cell->p);
++        {
++            int nWillBeDestroyed = 1;
++            for (auto neighbour : cell->getCellNeighbours())
++                if (neighbour->getRecyclerProfit() <= cell->getRecyclerProfit())
++                    ++nWillBeDestroyed;
++
++            if (nWillBeDestroyed < 3)
++                uniquePoses.emplace_back(cell->p);
++        }
+     }
+ 
+     for (auto cUnit : GInf.myCUnits)
+@@ -1223,6 +1249,27 @@ protected:
+     {
+         DBG_MSG_STR("#### OnRecyclerPart start");
+ 
++        bool bAddedBuildRequest = false;
++
++        // Just to increase matter for future invade
++        if (GInf.currentTurn < GInf.initialDistanceToEnemy/2)
++        {
++            MapCell* pCell = findBestRecycler().cell;
++            if (pCell)
++            {
++                if (GInf.currentTurn == 1)
++                {
++                    command.AddBuildRec(pCell->p, __LINE__);
++                    bAddedBuildRequest = true;
++                }
++                else if (GInf.currentTurn > 2 && GInf.myRecycleNum < 2)
++                {
++                    command.AddBuildRec(pCell->p, __LINE__);
++                    bAddedBuildRequest = true;
++                }
++            }
++        }
++
+         // Sort to extract far recyclers first
+         std::sort(recyclers.begin(), recyclers.end(), [](Pos lhd, Pos rhd) { return GInf.bOppRight ? lhd.x > rhd.x : lhd.x < rhd.x; });
+ 
+@@ -1232,6 +1279,7 @@ protected:
+         {
+             command.AddBuildRec(*it, __LINE__);
+             it = std::find_if(it, recyclers.end(), canBuildRec);
++            bAddedBuildRequest = true;
+             break;
+         }
+ 
+@@ -1241,10 +1289,22 @@ protected:
+             int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
+             if (!pCell->recycler && !pCell->recyclerNextStep && pCell->can_build)
+             {
+-                if (isOnEnemySide(pCell) && !hasRecyclerNeighbours(pCell) || numEnemies > 1)
++                if (isOnEnemySide(pCell) && !hasRecyclerNeighbours(pCell) || numEnemies > 2)
++                {
+                     command.AddBuildRec(pCell->p, __LINE__);
++                    bAddedBuildRequest = true;
++                }
+             }
+         }
++
++        if (!bAddedBuildRequest &&
++            GInf.myTotalBuildedRecycleNum < GInf.enemyTotalBuildedRecycleNum)
++            //GInf.my_matter + GInf.myCUnitsNum * 10 < GInf.opp_matter + GInf.enemyCUnitsNum * 10 + 10)
++        {
++            MapCell* pCell = findBestRecycler().cell;
++            if (pCell)
++                command.AddBuildRec(pCell->p, __LINE__);
++        }
+     }
+     virtual void OnSpawnPart()
+     {
+@@ -1361,7 +1421,7 @@ protected:
+                 bool bCanProtectNearCell_D1 = false;
+                 for (auto pCell : cell_to_move->getCellNeighbours())
+                     if (int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
+-                        pCell->isMy() && numEnemies > pCell->units + pCell->unitsNextStep && numEnemies - pCell->units + pCell->unitsNextStep <= cell_to_move->units)
++                        (pCell->isMy() || pCell->isNobodys()) && numEnemies > pCell->units + pCell->unitsNextStep && numEnemies - pCell->units + pCell->unitsNextStep <= cell_to_move->units)
+                     {
+                         bCanProtectNearCell_D1 = true;
+                     }
