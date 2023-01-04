@@ -66,6 +66,7 @@ struct MapCell {
     int scrap_amount = 0;
     int owner = 0; // 1 = me, 0 = enemy, -1 = neutral
     int units = 0;
+    int unitsNextStep = 0;
     int recycler = 0;
     bool recyclerNextStep = 0;
 
@@ -84,6 +85,7 @@ struct MapCell {
         std::cin >> scrap_amount >> owner >> units >> recycler >> can_build >> can_spawn >> in_range_of_recycler; std::cin.ignore();
         recycleProfit = -1;
         recyclerNextStep = 0;
+        unitsNextStep = 0;
     }
 
     inline bool isMy()        const { return owner ==  1; }
@@ -374,30 +376,58 @@ std::vector<std::vector<MapCell>>& MapCell::map = GInf.map;
 
 
  class Command {
-     std::stringstream ss;
+    std::stringstream ss;
     std::stringstream errSS_Build, errSS_Spawn, errSS_Mpve;
-     bool bEmpty = true;
+    bool bEmpty = true;
 
  public:
-     bool empty() const { return bEmpty; }
+    bool empty() const { return bEmpty; }
 
     void Clear()  { ss.str(""); errSS_Build.str(""); errSS_Spawn.str(""); errSS_Mpve.str(""); bEmpty = true; }
-    void Submit() { std::cerr << errSS_Build.str()<< std::endl << errSS_Spawn.str()<< std::endl << errSS_Mpve.str()<< std::endl; std::cout << ss.str() << std::endl; }
+    void Submit()
+    {
+        std::cerr << errSS_Build.str() << std::endl << errSS_Spawn.str() << std::endl << errSS_Mpve.str() << std::endl;
+        std::cout << ss.str() << std::endl;
+    }
 
-    void AddBuildRec(Pos p, int l)                       { bEmpty = false; ss << "BUILD " << p.x << ' ' << p.y << ';'; GInf.my_matter -= 10; GInf.getCell(p).recyclerNextStep = 1;
-                                                                  errSS_Build << "BUILD " << p.x << ' ' << p.y << "L " << l << "; ";}
-     void AddMove(int amount, Pos from, Pos to, int line) { bEmpty = false; ss << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';'; GInf.myMovedNum += amount;
-                                                                   errSS_Mpve << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " l=" << line << "; ";}
-     void AddSpawn(int amount, Pos p, int line)           { bEmpty = false; ss << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';                                     GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
-                                                                  errSS_Spawn << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << " l=" << line << "; "; }
-     void AddWait()                                       { bEmpty = false; ss << "WAIT"; }
- } command;
+    void AddBuildRec(Pos p, int l)
+    {
+        bEmpty = false;
+        ss          << "BUILD " << p.x << ' ' << p.y << ';';
+        errSS_Build << "BUILD " << p.x << ' ' << p.y << "L " << l << "; ";
+        GInf.my_matter -= 10; GInf.getCell(p).recyclerNextStep = 1;
+    }
+
+     void AddMove(int amount, Pos from, Pos to, int line)
+     {
+        bEmpty = false;
+        ss         << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << ';';
+        errSS_Mpve << "MOVE "  << amount << ' ' << from.x << ' ' << from.y << ' ' << to.x << ' ' << to.y << " L= " << line << "; ";
+        GInf.myMovedNum += amount;
+    }
+
+     void AddSpawn(int amount, Pos p, int line)
+     {
+        bEmpty = false;
+        ss          << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << ';';
+        errSS_Spawn << "SPAWN " << amount << ' ' << p.x << ' ' << p.y << "L= " << line << "; ";
+
+        GInf.mySpawnNum += 1; GInf.my_matter -= amount * 10;
+        GInf.getCell(p).unitsNextStep += amount;
+    }
+
+     void AddWait()
+     {
+        bEmpty = false;
+        ss << "WAIT";
+    }
+} command;
 
 
 bool isOnEnemySide(MapCell* cell)
 {
     if (GInf.bOppRight) return cell->p.x >= g_mapWidth/2;
-    else                return cell->p.x <= g_mapWidth/2;
+    else                return cell->p.x < g_mapWidth/2;
 }
 
 bool hasEnemyFreeCellNeighbours(MapCell* cell)
@@ -1331,7 +1361,7 @@ protected:
                 bool bCanProtectNearCell_D1 = false;
                 for (auto pCell : cell_to_move->getCellNeighbours())
                     if (int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
-                        pCell->isMy() && numEnemies > pCell->units && numEnemies - pCell->units <= cell_to_move->units)
+                        pCell->isMy() && numEnemies > pCell->units + pCell->unitsNextStep && numEnemies - pCell->units + pCell->unitsNextStep <= cell_to_move->units)
                     {
                         bCanProtectNearCell_D1 = true;
                     }
@@ -1343,8 +1373,8 @@ protected:
                     for (auto pCell : cell_to_move->getCellNeighbours())
                     {
                         int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
-                        int numUnitsToHelp = numEnemies - pCell->units;
-                        if (pCell->isMy() && numEnemies > pCell->units && availableUnitsNum)
+                        int numUnitsToHelp = numEnemies - pCell->units + pCell->unitsNextStep;
+                        if (pCell->isMy() && numEnemies > pCell->units  + pCell->unitsNextStep && availableUnitsNum)
                         {
                             numUnitsToHelp = std::min(numUnitsToHelp, availableUnitsNum);
                             command.AddMove(numUnitsToHelp, cell_to_move->p, pCell->p, __LINE__);
