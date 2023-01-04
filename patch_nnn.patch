@@ -1,0 +1,331 @@
+diff --git a/main.cpp b/main.cpp
+index 24992bf..241e75b 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -97,6 +97,7 @@ struct MapCell {
+ 
+ 
+     inline bool isValid()   const { return p.isValid && scrap_amount; }
++    inline bool isMyValid()   const { return isValid() && isMy(); }
+ 
+     Pos getTop()    { Pos nP {p.x, p.y - 1}; if (nP.y >= 0)          nP.isValid = true; return nP; }
+     Pos getBottom() { Pos nP {p.x, p.y + 1}; if (nP.y < g_mapHeight) nP.isValid = true; return nP; }
+@@ -106,10 +107,21 @@ struct MapCell {
+     std::vector<MapCell*> getCellNeighbours() {
+         std::vector<MapCell*> res = {};
+ 
+-        if (Pos p = getTop();    p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(&map[p.y][p.x]);
+-        if (Pos p = getBottom(); p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(&map[p.y][p.x]);
+-        if (Pos p = getLeft();   p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(&map[p.y][p.x]);
+-        if (Pos p = getRight();  p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getTop();    p.isValid && map[p.y][p.x].isValid()) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getBottom(); p.isValid && map[p.y][p.x].isValid()) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getLeft();   p.isValid && map[p.y][p.x].isValid()) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getRight();  p.isValid && map[p.y][p.x].isValid()) res.emplace_back(&map[p.y][p.x]);
++
++        return res;
++    }
++
++    std::vector<MapCell*> getMyCellNeighbours() {
++        std::vector<MapCell*> res = {};
++
++        if (Pos p = getTop();    p.isValid && map[p.y][p.x].isMyValid()) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getBottom(); p.isValid && map[p.y][p.x].isMyValid()) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getLeft();   p.isValid && map[p.y][p.x].isMyValid()) res.emplace_back(&map[p.y][p.x]);
++        if (Pos p = getRight();  p.isValid && map[p.y][p.x].isMyValid()) res.emplace_back(&map[p.y][p.x]);
+ 
+         return res;
+     }
+@@ -117,10 +129,10 @@ struct MapCell {
+     std::vector<Pos> getCellNeighboursPos() {
+         std::vector<Pos> res = {};
+ 
+-        if (Pos p = getTop();    p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(p);
+-        if (Pos p = getBottom(); p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(p);
+-        if (Pos p = getLeft();   p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(p);
+-        if (Pos p = getRight();  p.isValid && map[p.y][p.x].scrap_amount) res.emplace_back(p);
++        if (Pos p = getTop();    p.isValid && map[p.y][p.x].isValid()) res.emplace_back(p);
++        if (Pos p = getBottom(); p.isValid && map[p.y][p.x].isValid()) res.emplace_back(p);
++        if (Pos p = getLeft();   p.isValid && map[p.y][p.x].isValid()) res.emplace_back(p);
++        if (Pos p = getRight();  p.isValid && map[p.y][p.x].isValid()) res.emplace_back(p);
+ 
+         return res;
+     }
+@@ -189,6 +201,11 @@ struct GameInfo
+     int enemyCUnitsNum = 0;
+     int enemyRecycleNum = 0;
+ 
++    int myTotalBuildedRecycleNum = 0;
++    std::vector<Pos> myTotalBuildedRecycles;
++    int enemyTotalBuildedRecycleNum = 0;
++    std::vector<Pos> enemyTotalBuildedRecycles;
++
+     int myRecycleNum = 0;
+     int mySpawnNum = 0;
+     int myMovedNum = 0;
+@@ -247,6 +264,11 @@ struct GameInfo
+                     if (pCell->recycler)
+                     {
+                         myRecycleNum += 1;
++                        if (std::count(myTotalBuildedRecycles.begin(), myTotalBuildedRecycles.end(), pCell->p) == 0)
++                        {
++                            ++myTotalBuildedRecycleNum;
++                            myTotalBuildedRecycles.emplace_back(pCell->p);
++                        }
+                     }
+                 }
+                 else if (pCell->isEnemy())
+@@ -259,7 +281,14 @@ struct GameInfo
+                     }
+ 
+                     if (pCell->recycler)
++                    {
+                         enemyRecycleNum += 1;
++                        if (std::count(enemyTotalBuildedRecycles.begin(), enemyTotalBuildedRecycles.end(), pCell->p) == 0)
++                        {
++                            ++enemyTotalBuildedRecycleNum;
++                            enemyTotalBuildedRecycles.emplace_back(pCell->p);
++                        }
++                    }
+                 }
+ 
+                 WAmap[i][j] = pCell->recycler || pCell->scrap_amount == 0 ? WA_INVALID : WA_NOT_PROCESSED;
+@@ -632,8 +661,14 @@ ProfitCell findBestRecycler()
+     if (uniquePoses.empty())
+         return {};
+ 
+-    auto pCell = &GInf.getCell(uniquePoses.front());
+-    return { pCell->getRecyclerProfit(), pCell };
++    auto pCellFutureRecycle = &GInf.getCell(uniquePoses.front());
++
++    if (pCellFutureRecycle->scrap_amount < 5 || pCellFutureRecycle->getRecyclerProfit() < 30) return {};
++    else
++    {
++        DBG_V2(pCellFutureRecycle->p, pCellFutureRecycle->getRecyclerProfit());
++        return { pCellFutureRecycle->getRecyclerProfit(), pCellFutureRecycle };
++    }
+ }
+ 
+ struct SpawnRecomendation
+@@ -650,13 +685,46 @@ std::vector<SpawnRecomendation> findBestForSpawn()
+     */
+    std::vector<SpawnRecomendation> recomendations{};
+    int matter = GInf.my_matter;
++
++   static bool bFirstSpawn = false;
++   if (!bFirstSpawn)
++   {
++        for (auto pBestForSpawnSell : GInf.myCUnits)
++        {
++                // Wave depth == 2
++                std::vector<MapCell*> neighbours;
++                neighbours.reserve(14);
++
++                for (auto neighbour : pBestForSpawnSell->getCellNeighbours())
++                {
++                    neighbours.emplace_back(neighbour);
++                    for (auto neighbour2 : neighbour->getCellNeighbours())
++                    {
++                        if (!neighbour2->isEnemyUnit())
++                            continue;
++
++                        neighbours.emplace_back(neighbour2);
++                    }
++                }
++
++                neighbours.erase(std::unique(neighbours.begin(), neighbours.end()), neighbours.end());
++                int numEnemies = std::accumulate(neighbours.begin(), neighbours.end(), 0, [](int u, MapCell* pCell) { return u + pCell->units; });
++
++            if (numEnemies)
++            {
++                recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, GInf.my_matter / 10/2 });
++                bFirstSpawn = true;
++                break;
++            }
++        }
++   }
+    
+    // ----- 1 -----
+     for (auto pBestForSpawnSell : GInf.myCUnits)
+     {
+         if (int numEnemies = getEnemyUnitNeighboursCount_D2(pBestForSpawnSell); numEnemies && !willCellTurnToGrass(pBestForSpawnSell)
+             && pBestForSpawnSell->can_spawn && !pBestForSpawnSell->recyclerNextStep
+-            && numEnemies > pBestForSpawnSell->units
++            && numEnemies >= pBestForSpawnSell->units
+             && std::count_if(recomendations.begin(), recomendations.end(), [cell = pBestForSpawnSell](auto r) { return cell->p == r.p; }) == 0)
+         {
+             if (matter < 10)
+@@ -665,7 +733,7 @@ std::vector<SpawnRecomendation> findBestForSpawn()
+             int toSpawn = std::min(matter / 10, numEnemies - getEnemyUnitNeighboursCount_D1(pBestForSpawnSell));
+ 
+             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+-            matter -= toSpawn;
++            matter -= toSpawn * 10;
+             recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
+         }
+     }
+@@ -684,7 +752,7 @@ std::vector<SpawnRecomendation> findBestForSpawn()
+             int toSpawn = std::min(matter / 10, getEnemyUnitNeighboursCount_D2(pBestForSpawnSell));
+ 
+             DBG_V3(pBestForSpawnSell->p, toSpawn, __LINE__);
+-            matter -= toSpawn;
++            matter -= toSpawn * 10;
+             recomendations.emplace_back(SpawnRecomendation{ pBestForSpawnSell->p, toSpawn });
+         }
+     }
+@@ -1222,19 +1290,83 @@ protected:
+     virtual void OnRecyclerPart()
+     {
+         DBG_MSG_STR("#### OnRecyclerPart start");
++        int builded = 0;
+ 
+-        // Sort to extract far recyclers first
+-        std::sort(recyclers.begin(), recyclers.end(), [](Pos lhd, Pos rhd) { return GInf.bOppRight ? lhd.x > rhd.x : lhd.x < rhd.x; });
+ 
+-        auto canBuildRec = [](const Pos& p) { auto pCell = &GInf.getCell(p); return pCell->isMy() && pCell->units == 0 && !pCell->recycler && !pCell->recyclerNextStep; };
+-        auto it = std::find_if(recyclers.begin(), recyclers.end(), canBuildRec);
+-        while (it != recyclers.end() && GInf.myRecycleNum < 2)
++        std::vector<MapCell*> myCellsToDefence;
++        for (auto pCell : GInf.myCells)
++            if (int numEnemies = getEnemyUnitNeighboursCount_D1(pCell);
++                numEnemies != 0 && numEnemies > pCell->units && std::count(myCellsToDefence.begin(), myCellsToDefence.end(), pCell) == 0)
++                myCellsToDefence.emplace_back(pCell);
++        
++        int canSpawn = GInf.my_matter / 10;
++        for (auto pMyCell : myCellsToDefence)
+         {
+-            command.AddBuildRec(*it, __LINE__);
+-            it = std::find_if(it, recyclers.end(), canBuildRec);
+-            break;
++            if (pMyCell->units == 0)
++                continue;
++
++            int toHelp = 0;
++            int numEnemies = getEnemyUnitNeighboursCount_D1(pMyCell);
++            for (auto pNeighbour : pMyCell->getMyCellNeighbours())
++            {
++                int neighbourEnemiesNum = getEnemyUnitNeighboursCount_D1(pNeighbour);
++                toHelp = std::max(toHelp, pNeighbour->units - neighbourEnemiesNum);
++            }
++
++            if (toHelp + pMyCell->units < numEnemies)
++            {
++                if (toHelp + pMyCell->units + canSpawn > numEnemies)
++                {
++                    canSpawn -= numEnemies - toHelp - pMyCell->units;
++                }
++                else
++                {
++                    canSpawn = 0;
++                }
++            }
+         }
++        DBG_MSG_V("After first cycle inside OnRecycler: ", canSpawn);
++
++        struct CellHelp {
++            MapCell* pCell;
++            int toHelp;
++        };
++        std::vector<CellHelp> cellsToHelp;
++        for (auto pMyCell : myCellsToDefence)
++        {
++            if (pMyCell->units)
++                continue;
++            
++            int toHelp = 0;
++            int numEnemies = getEnemyUnitNeighboursCount_D1(pMyCell);
++            for (auto pNeighbour : pMyCell->getMyCellNeighbours())
++            {
++                int neighbourEnemiesNum = getEnemyUnitNeighboursCount_D1(pNeighbour);
++                toHelp = std::max(toHelp, pNeighbour->units - neighbourEnemiesNum);
++            }
++
++            if (toHelp + pMyCell->units < numEnemies)
++            {
++                if (toHelp + pMyCell->units + canSpawn > numEnemies)
++                {
++                    canSpawn -= numEnemies - toHelp - pMyCell->units;
++                    cellsToHelp.emplace_back(CellHelp{pMyCell, numEnemies - toHelp - pMyCell->units });
++                }
++            }
++        }
++        DBG_MSG_STR("After second cycle inside OnRecycler: ");
++        std::sort(cellsToHelp.begin(), cellsToHelp.end(), [](auto lhd, auto rhd){ return lhd.toHelp < rhd.toHelp; });
++        for (auto[pCell, toHelp] : cellsToHelp)
++        {
++            if (canSpawn >= toHelp)
++            {
++                canSpawn -= toHelp;
++                continue;
++            }
+ 
++            command.AddBuildRec(pCell->p, __LINE__);
++        }
++        
+         // Defence my cells
+         for (auto pCell : GInf.myCells)
+         {
+@@ -1242,9 +1374,20 @@ protected:
+             if (!pCell->recycler && !pCell->recyclerNextStep && pCell->can_build)
+             {
+                 if (isOnEnemySide(pCell) && !hasRecyclerNeighbours(pCell) || numEnemies > 1)
++                {
+                     command.AddBuildRec(pCell->p, __LINE__);
++                    ++builded;
++                }
+             }
+         }
++
++        if (GInf.enemyTotalBuildedRecycleNum >= GInf.myTotalBuildedRecycleNum + builded && GInf.myRecycleNum < 3)
++        {
++            auto pCell = findBestRecycler().cell;
++            if (pCell)
++                command.AddBuildRec(pCell->p, __LINE__);
++        }
++
+     }
+     virtual void OnSpawnPart()
+     {
+@@ -1262,29 +1405,14 @@ protected:
+         if (GInf.my_matter >= 10)
+         {
+             std::vector<Pos> alreadySwawned;
+-            for (auto p : rTop_Route)
+-            {
+-                auto pCell = &GInf.getCell(p);
+-                if (GInf.isMyValid(p) && hasEnemyUnitNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
+-                {
+-                    command.AddSpawn(getEnemyUnitNeighboursCount_D1(pCell), p, __LINE__);
+-                    alreadySwawned.emplace_back(p);
+-                }
+-            }
+-            
+-            for (auto p : rBot_Route)
+-            {
+-                auto pCell = &GInf.getCell(p);
+-                if (GInf.isMyValid(p) && hasEnemyUnitNeighbours(pCell) && !pCell->recycler && !pCell->recyclerNextStep)
+-                {
+-                    command.AddSpawn(getEnemyUnitNeighboursCount_D1(pCell), p, __LINE__);
+-                    alreadySwawned.emplace_back(p);
+-                }
+-            }
+ 
+             for (auto& spawnRec : findBestForSpawn())
+                 if (spawnRec.p.isValid && std::find(alreadySwawned.begin(), alreadySwawned.end(), spawnRec.p) == alreadySwawned.end())
+                 {
++                    if (rTop_Pos.isValid && spawnRec.p == rTop_Pos ||
++                        rBot_Pos.isValid && spawnRec.p == rBot_Pos)
++                        spawnRec.units = getEnemyUnitNeighboursCount_D1(&GInf.getCell(spawnRec.p));
++
+                     command.AddSpawn(spawnRec.units, spawnRec.p, __LINE__);
+                 }
+         }
+@@ -1452,7 +1580,7 @@ protected:
+         }
+ 
+         // Research part from base strategy
+-        if (GInf.currentTurn >= 5 + GInf.initialDistanceToEnemy)
++        if (GInf.currentTurn >= GInf.initialDistanceToEnemy)
+         {
+             DBG_MSG_STR("-------- Research part start --------");
+             if (!researcherPos.isValid && GInf.my_matter >= 10)
